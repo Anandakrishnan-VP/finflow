@@ -1,0 +1,68 @@
+# Credentials & Configuration
+.env
+.env.*
+!.env.example
+
+# Build guides and workspace instructions
+buildguide/
+
+# CSV / statement raw test data
+*.csv
+*.xlsx
+*.xls
+*.pdf
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+jspm_packages/
+web_modules/
+.venv/
+venv/
+ENV/
+env/
+
+# Build outputs
+dist/
+build/
+out/
+*.egg-info/
+
+# Neo4j GDS & other downloaded binaries
+plugins/*.jar
+
+# TLS certificates
+nginx/certs/*.key
+nginx/certs/*.crt
+nginx/certs/*.pem
+
+# Local databases & persistent data directories
+postgres_data/
+neo4j_data/
+redis_data/
+data/
+uploads/
+reports/
+*.db
+*.sqlite3
+
+# Python cache and temporary files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# IDE / Editor configurations
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

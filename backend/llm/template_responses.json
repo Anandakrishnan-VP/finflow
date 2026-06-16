@@ -1,0 +1,28 @@
+{
+  "_note": "Template responses for offline/demo fallback. LLM_PROVIDER=template uses these.",
+  "case_theory": {
+    "typology": "round-tripping",
+    "confidence": "HIGH",
+    "evidence": [
+      "Funds traced through 3 linked accounts returning to origin within 8-21 days",
+      "Fan-out pattern: single source distributing to 4 mule accounts within 72 hours",
+      "8 transactions in the ₹4.2L-₹4.9L range indicate structuring below ₹5L STR threshold"
+    ]
+  },
+  "narrative": "Analysis of accounts linked to the accused reveals a sophisticated round-tripping scheme operating between July and October 2024. The primary account received credits totalling approximately ₹42.8 lakhs, which were systematically distributed to four linked accounts within 24-72 hours of receipt, consistent with a fan-out layering strategy. FIFO money trail analysis confirms that 87% of credited funds were disbursed before prior balances were restored. Eight transactions were identified in the ₹4.2L-₹4.9L band, indicating deliberate structuring to avoid the ₹5 lakh STR reporting threshold under PMLA 2002. Isolation Forest anomaly detection flagged 23 transactions with risk scores exceeding 0.80, independently corroborating the rule-based pattern findings.",
+  "nl_queries": {
+    "default": {
+      "query_type": "transaction_filter",
+      "filters": {
+        "account_ids": [], "date_from": null, "date_to": null,
+        "amount_min": null, "amount_max": null, "txn_type": null, "flags": []
+      },
+      "limit": 100
+    },
+    "circular": {
+      "query_type": "counterparty_network",
+      "filters": {"account_ids": [], "flags": ["CIRCULAR_FLOW", "ROUND_TRIP"]},
+      "limit": 50
+    }
+  }
+}
