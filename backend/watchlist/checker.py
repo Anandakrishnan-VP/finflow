@@ -37,7 +37,7 @@ async def check_against_watchlist(
                              VALUES (:wid, :cid, :sid, :tid)
                              ON CONFLICT DO NOTHING"""),
                         {"wid": str(entry.id), "cid": case_id,
-                         "sid": statement_id, "tid": txn.txn_hash}
+                         "sid": statement_id, "tid": txn.id}
                     )
                     if TransactionFlag.WATCHLIST_HIT not in txn.flags:
                         txn.flags.append(TransactionFlag.WATCHLIST_HIT)

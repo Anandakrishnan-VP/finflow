@@ -47,7 +47,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                 if not _is_header(cells):
                     all_rows.append(cells)
         txns = _parse_rows(all_rows, file_path)
-        if len(txns) >= 5:
+        if txns:
             return txns
     except Exception as e:
         logger.debug("HDFC camelot failed: %s", e)
@@ -74,7 +74,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
     except Exception as e:
         logger.debug("HDFC pdfplumber failed: %s", e)
 
-    if len(txns) < 5:
+    if not txns:
         from parsers.pdf_scanned import parse_scanned_pdf
         return await parse_scanned_pdf(file_path, BANK_NAME)
     return txns

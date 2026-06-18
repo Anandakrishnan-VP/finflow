@@ -140,3 +140,84 @@ async def get_cytoscape_data(case_id: str) -> dict:
                 "narration": record["narration"],
             }})
     return {"nodes": nodes, "edges": edges}
+
+
+async def run_taint_propagation(case_id: str, seed_account_ids: list[str]) -> dict:
+    """
+    Personalized PageRank seeded from known-bad accounts (watchlist hits).
+    Returns {account_id: raw_score} — higher score = closer to a tainted seed.
+    RULE 2: project, run, drop in finally. Same discipline as run_graph_algorithms.
+    If there are no seeds, taint propagation is meaningless — return {} and let
+    the caller treat every account's taint contribution as neutral (0).
+    """
+    if not seed_account_ids:
+        logger.info("No watchlist seeds for case %s — skipping taint propagation", case_id)
+        return {}
+
+    driver = get_neo4j_driver()
+    results = {}
+    async with driver.session() as session:
+        exists_result = await session.run("CALL gds.graph.exists($name) YIELD exists", name=GRAPH_NAME)
+        rec = await exists_result.single()
+        if rec and rec["exists"]:
+            await session.run("CALL gds.graph.drop($name) YIELD graphName", name=GRAPH_NAME)
+
+        try:
+            await session.run("""
+                CALL gds.graph.project(
+                    $name,
+                    {Account: {label: 'Account', properties: {case_id: {defaultValue: ''}}}},
+                    {SENT: {type: 'SENT', orientation: 'NATURAL'}}
+                )
+            """, name=GRAPH_NAME)
+
+            seed_lookup = await session.run("""
+                MATCH (a:Account {case_id: $cid}) WHERE a.account_id IN $seeds
+                RETURN id(a) AS nodeId
+            """, cid=case_id, seeds=seed_account_ids)
+            seed_node_ids = [r["nodeId"] async for r in seed_lookup]
+
+            if not seed_node_ids:
+                logger.warning("Watchlist seed accounts not present in graph for case %s", case_id)
+                return {}
+
+            # NOTE: parameter name is `sourceNodes` as of GDS 2.x — verify against
+            # whichever GDS jar version setup.sh downloaded if this call errors.
+            ppr_result = await session.run("""
+                CALL gds.pageRank.stream($name, {
+                    sourceNodes: $seeds, dampingFactor: 0.85, maxIterations: 20
+                })
+                YIELD nodeId, score
+                RETURN gds.util.asNode(nodeId).account_id AS account_id, score
+                ORDER BY score DESC
+            """, name=GRAPH_NAME, seeds=seed_node_ids)
+            async for record in ppr_result:
+                results[record["account_id"]] = record["score"]
+
+        except Exception as e:
+            logger.error("Taint propagation failed: %s", e)
+        finally:
+            try:
+                exists_result = await session.run("CALL gds.graph.exists($name) YIELD exists", name=GRAPH_NAME)
+                rec = await exists_result.single()
+                if rec and rec["exists"]:
+                    await session.run("CALL gds.graph.drop($name) YIELD graphName", name=GRAPH_NAME)
+            except Exception as drop_err:
+                logger.error("GDS drop failed: %s", drop_err)
+
+    return results
+
+
+def rank_normalize(scores: dict) -> dict:
+    """
+    Converts raw scores into 0–1 percentiles relative to other accounts in the
+    same case. Shared by taint propagation and betweenness in risk_fusion.py —
+    defined here since this is the first module that needs it.
+    """
+    import bisect
+    if not scores:
+        return {}
+    sorted_vals = sorted(scores.values())
+    n = len(sorted_vals)
+    return {k: bisect.bisect_right(sorted_vals, v) / n for k, v in scores.items()}
+

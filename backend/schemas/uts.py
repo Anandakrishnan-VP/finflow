@@ -29,6 +29,7 @@ class TransactionFlag(str, Enum):
 
 class UniversalTransaction(BaseModel):
     """CRITICAL: Every monetary field is Decimal. Never float."""
+    id: Optional[str] = None
     txn_hash: str
     case_id: str
     statement_id: str

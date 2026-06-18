@@ -19,7 +19,7 @@ MODEL_PATHS = {
 # These SHA-256 hashes are populated by scripts/compute_hashes.py after training.
 # Paste the output of compute_hashes.py here before deploying.
 MODEL_HASHES: dict[str, str] = {
-    "isolation_forest": "47006b3505d615a76a9476535f1fe6107f2edae772c6df869f6ed84a96b27c7a",
+    "isolation_forest": "e11e36c6843d29202dcef580416df75ee35bb1af16b1b84005ee9ed041d734d6",
 }
 
 

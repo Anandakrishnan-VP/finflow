@@ -76,7 +76,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
         tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
         rows = [list(map(str, r)) for t in tables for _, r in t.df.iterrows() if not _is_header(list(map(str, r)))]
         txns = [t for r in rows for t in [_parse_row(r, "", "", file_path)] if t]
-        if len(txns) >= 5: return txns
+        if txns: return txns
     except Exception: pass
     try:
         with pdfplumber.open(file_path) as pdf:
@@ -88,7 +88,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                     if _is_header(cells): continue
                     t = _parse_row(cells, "", "", file_path)
                     if t: txns.append(t)
-        if len(txns) >= 5: return txns
+        if txns: return txns
     except Exception: pass
     from parsers.pdf_scanned import parse_scanned_pdf
     return await parse_scanned_pdf(file_path, BANK_NAME)

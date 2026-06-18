@@ -12,8 +12,11 @@ import NLQueryPanel from '../components/NLQueryPanel';
 import ReportsPanel from '../components/ReportsPanel';
 import TimelineChart from '../components/TimelineChart';
 import LlmModeBadge from '../components/LlmModeBadge';
+import VerdictsPanel from '../components/VerdictsPanel';
+import BenfordCard from '../components/BenfordCard';
 
-const TABS = ['Overview', 'Upload', 'Transactions', 'Alerts', 'Graph', 'Money Trail', 'Entities', 'Ask AI', 'Reports'];
+const TABS = ['Overview', 'Upload', 'Transactions', 'Alerts', 'Verdicts', 'Graph', 'Money Trail', 'Entities', 'Ask AI', 'Reports'];
+
 
 export default function CaseDetailPage() {
   const { caseId } = useParams();
@@ -83,6 +86,8 @@ export default function CaseDetailPage() {
             {taskId && <ProgressBar taskId={taskId} onComplete={() => { loadSummary(); loadCase(); }} />}
           </div>
 
+          <BenfordCard caseId={caseId} />
+
           <TimelineChart caseId={caseId} />
         </div>
       )}
@@ -90,6 +95,7 @@ export default function CaseDetailPage() {
       {activeTab === 'Upload'       && <UploadPanel caseId={caseId} onUploaded={loadSummary} />}
       {activeTab === 'Transactions' && <TransactionsTable caseId={caseId} />}
       {activeTab === 'Alerts'       && <AlertsTable caseId={caseId} />}
+      {activeTab === 'Verdicts'     && <VerdictsPanel caseId={caseId} />}
       {activeTab === 'Graph'        && <GraphView caseId={caseId} />}
       {activeTab === 'Money Trail'  && <MoneyTrailTable caseId={caseId} />}
       {activeTab === 'Entities'     && <EntitiesPanel caseId={caseId} />}
@@ -98,3 +104,4 @@ export default function CaseDetailPage() {
     </div>
   );
 }
+

@@ -46,6 +46,16 @@ def _make_hash(account_id: str, date: datetime, amount: Decimal, narration: str)
     ).hexdigest()
 
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
+    # Pre-extract account info from the first page text
+    account_id, account_holder = "", ""
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            if pdf.pages:
+                header_text = pdf.pages[0].extract_text() or ""
+                account_id, account_holder = _extract_account_info(header_text)
+    except Exception as e:
+        logger.debug("SBI pre-extract account info failed: %s", e)
+
     # Try camelot lattice first
     try:
         import camelot
@@ -56,8 +66,8 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                 cells = [str(c).strip() for c in row]
                 if not _is_header_row([c.lower() for c in cells]):
                     all_rows.append(cells)
-        txns = _normalize_sbi_rows(all_rows, file_path)
-        if len(txns) >= 5:
+        txns = _normalize_sbi_rows(all_rows, file_path, account_id, account_holder)
+        if txns:
             return txns
     except Exception as e:
         logger.debug("SBI camelot failed: %s", e)
@@ -66,7 +76,6 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
     txns = []
     try:
         with pdfplumber.open(file_path) as pdf:
-            account_id, account_holder = "", ""
             for page in pdf.pages:
                 if not account_id:
                     header_text = page.extract_text() or ""
@@ -84,7 +93,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
     except Exception as e:
         logger.debug("SBI pdfplumber failed: %s", e)
 
-    if len(txns) < 5:
+    if not txns:
         from parsers.pdf_scanned import parse_scanned_pdf
         return await parse_scanned_pdf(file_path, BANK_NAME)
     return txns
@@ -94,14 +103,13 @@ def _extract_account_info(text: str) -> tuple[str, str]:
     m = re.search(r"Account\s*Number?\s*:?\s*(\d{9,20})", text, re.IGNORECASE)
     if m:
         account_id = m.group(1).strip()
-    m = re.search(r"(?:Customer|Account\s*Holder)\s*(?:Name)?\s*:?\s*([A-Z ]+)", text, re.IGNORECASE)
+    m = re.search(r"(?:Customer|Account\s*Holder|Account)\s*(?:Name)?\s*:?\s*([A-Z ]+)", text, re.IGNORECASE)
     if m:
         account_holder = m.group(1).strip()
     return account_id, account_holder
 
-def _normalize_sbi_rows(rows: list, file_path: str) -> list[UniversalTransaction]:
+def _normalize_sbi_rows(rows: list, file_path: str, account_id: str = "", account_holder: str = "") -> list[UniversalTransaction]:
     txns = []
-    account_id, account_holder = "", ""
     for cells in rows:
         t = _parse_sbi_row(cells, account_id, account_holder, file_path)
         if t:

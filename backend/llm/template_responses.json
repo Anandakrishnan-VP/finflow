@@ -24,5 +24,18 @@
       "filters": {"account_ids": [], "flags": ["CIRCULAR_FLOW", "ROUND_TRIP"]},
       "limit": 50
     }
+  },
+  "second_opinion": {
+    "suspicious": {
+      "verdict": "SUSPICIOUS",
+      "confidence": "HIGH",
+      "reasoning": "High volume credits followed by immediate rapid distribution to multiple counterparties (fan-out pattern). Minimal end-of-day balances and round-tripping of funds indicate potential layering."
+    },
+    "clear": {
+      "verdict": "NOT_SUSPICIOUS",
+      "confidence": "MEDIUM",
+      "reasoning": "Transactions show normal activity including regular monthly rent payments, salary credits, and family support transfers. No high-frequency structuring or layering patterns detected."
+    }
   }
 }
+

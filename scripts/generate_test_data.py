@@ -58,10 +58,11 @@ MULE3_KOTAK = [
     ["Txn Date","Description","Dr / Cr","Withdrawal Amt","Deposit Amt","Balance"],
     [make_date(BASE,-200),"Old transaction","DR","1000.00","","4000.00"],
     # 6-month gap → DORMANT_ACTIVATION
-    [make_date(BASE,3),  "NEFT CR Harish Part3","CR","","490000.00","494000.00"],
-    [make_date(BASE,7),  "NEFT DR Endpoint Acc","DR","488000.00","","6000.00"],
-    [make_date(BASE,60), "NEFT DR HR Origin Return","DR","300000.00","","-294000.00"],
+    [make_date(BASE,3),  "NEFT CR Salary Credit ABC Corp","CR","","490000.00","494000.00"],
+    [make_date(BASE,7),  "NEFT DR Rent Payment Landlord","DR","488000.00","","6000.00"],
+    [make_date(BASE,60), "NEFT DR Family Support Transfer","DR","300000.00","","-294000.00"],
 ]
+
 
 datasets = [
     ("SBI_Harish_Reddy_2024.csv",  HARISH_SBI),

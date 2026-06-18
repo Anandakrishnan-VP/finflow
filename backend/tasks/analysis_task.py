@@ -80,9 +80,64 @@ async def _run_analysis_pipeline(task_self, case_id: str, task_id: str):
         graph_results = await run_graph_algorithms(case_id)
         circles = await detect_circular_flows(case_id)
 
+        update(68, "Running risk taint propagation")
+        from graph.algorithms import run_taint_propagation
+        watchlist_seeds = list({t.account_id for t in transactions if any("WATCHLIST_HIT" in str(f) for f in t.flags)})
+        taint_scores = await run_taint_propagation(case_id, watchlist_seeds)
+
+        update(71, "Running Benford's Law check")
+        from engine.benford import run_benford_check
+        benford_result = run_benford_check([t.amount for t in transactions])
+        await _save_benford_result(db, case_id, benford_result)
+
         update(75, "Running ML anomaly detection (Isolation Forest)")
         from ml.isolation_forest import run_isolation_forest
         transactions = run_isolation_forest(transactions)
+
+        update(78, "Fusing algorithmic risk signals")
+        betweenness_scores = graph_results.get("betweenness", {})
+        from engine.risk_fusion import compute_composite_scores, select_accounts_for_llm_review
+        composite_results = compute_composite_scores(transactions, taint_scores, betweenness_scores)
+
+        # Select review pool
+        llm_pool = select_accounts_for_llm_review(composite_results)
+
+        update(80, f"Running blind LLM second opinions on {len(llm_pool)} accounts")
+        from llm.second_opinion import get_second_opinion
+        from engine.verdict_fusion import fuse_verdict
+        from collections import defaultdict
+        txns_by_acc = defaultdict(list)
+        for t in transactions:
+            txns_by_acc[t.account_id].append(t)
+
+        verdict_rows = []
+        for account_id, res in composite_results.items():
+            algo_verdict = res["algo_verdict"]
+            if account_id in llm_pool:
+                opinion = await get_second_opinion(account_id, txns_by_acc[account_id])
+                llm_verdict = opinion["verdict"]
+                llm_confidence = opinion["confidence"]
+                llm_reasoning = opinion["reasoning"]
+            else:
+                llm_verdict = "NOT_REVIEWED"
+                llm_confidence = None
+                llm_reasoning = None
+
+            fused = fuse_verdict(algo_verdict, llm_verdict)
+            verdict_rows.append({
+                "account_id": account_id,
+                "composite_score": res["composite_score"],
+                "score_breakdown": res["breakdown"],
+                "algo_verdict": algo_verdict,
+                "llm_verdict": llm_verdict,
+                "llm_confidence": llm_confidence,
+                "llm_reasoning": llm_reasoning,
+                "agreement_tier": fused["agreement_tier"],
+                "tier_label": fused["tier_label"],
+                "review_priority": fused["review_priority"],
+            })
+
+        await _save_verdicts(db, case_id, verdict_rows)
 
         update(82, "Resolving entities")
         from entity.resolver import resolve_entities
@@ -158,6 +213,7 @@ async def _load_transactions(db, case_id: str) -> list:
     for row in rows:
         try:
             txns.append(UniversalTransaction(
+                id=str(row.id),
                 txn_hash=row.txn_hash, case_id=str(row.case_id),
                 statement_id=str(row.statement_id),
                 source_file_hash=row.txn_hash,
@@ -251,3 +307,72 @@ def _build_case_data(case_id: str, transactions, trail, graph_results: dict) -> 
         "graph_top_pagerank": list(graph_results.get("pagerank", {}).items())[:5],
         "community_count": len(set(graph_results.get("communities", {}).values())),
     }
+
+
+async def _save_benford_result(db, case_id: str, result: dict):
+    from sqlalchemy import text
+    import json
+    await db.execute(
+        text("""INSERT INTO case_benford_results 
+                (case_id, applicable, sample_size, chi_square, p_value, significant_deviation, observed_distribution, expected_distribution, reason)
+                VALUES (:cid, :app, :sample, :chi, :p, :sig, CAST(:obs AS jsonb), CAST(:exp AS jsonb), :reason)
+                ON CONFLICT (case_id) DO UPDATE SET
+                    applicable = EXCLUDED.applicable,
+                    sample_size = EXCLUDED.sample_size,
+                    chi_square = EXCLUDED.chi_square,
+                    p_value = EXCLUDED.p_value,
+                    significant_deviation = EXCLUDED.significant_deviation,
+                    observed_distribution = EXCLUDED.observed_distribution,
+                    expected_distribution = EXCLUDED.expected_distribution,
+                    reason = EXCLUDED.reason,
+                    computed_at = NOW()"""),
+        {
+            "cid": case_id,
+            "app": result["applicable"],
+            "sample": result.get("sample_size"),
+            "chi": result.get("chi_square"),
+            "p": result.get("p_value"),
+            "sig": result.get("significant_deviation"),
+            "obs": json.dumps(result.get("observed_distribution")),
+            "exp": json.dumps(result.get("expected_distribution")),
+            "reason": result.get("reason"),
+        }
+    )
+    await db.commit()
+
+
+async def _save_verdicts(db, case_id: str, rows: list[dict]):
+    from sqlalchemy import text
+    import json
+    for r in rows:
+        await db.execute(
+            text("""INSERT INTO account_verdicts 
+                    (case_id, account_id, composite_score, score_breakdown, algo_verdict, llm_verdict, llm_confidence, llm_reasoning, agreement_tier, tier_label, review_priority)
+                    VALUES (:cid, :aid, :score, CAST(:breakdown AS jsonb), :algo, :llm, :llm_conf, :llm_reason, :tier, :label, :prio)
+                    ON CONFLICT (case_id, account_id) DO UPDATE SET
+                        composite_score = EXCLUDED.composite_score,
+                        score_breakdown = EXCLUDED.score_breakdown,
+                        algo_verdict = EXCLUDED.algo_verdict,
+                        llm_verdict = EXCLUDED.llm_verdict,
+                        llm_confidence = EXCLUDED.llm_confidence,
+                        llm_reasoning = EXCLUDED.llm_reasoning,
+                        agreement_tier = EXCLUDED.agreement_tier,
+                        tier_label = EXCLUDED.tier_label,
+                        review_priority = EXCLUDED.review_priority,
+                        reviewed_at = NOW()"""),
+            {
+                "cid": case_id,
+                "aid": r["account_id"],
+                "score": r["composite_score"],
+                "breakdown": json.dumps(r["score_breakdown"]),
+                "algo": r["algo_verdict"],
+                "llm": r["llm_verdict"],
+                "llm_conf": r["llm_confidence"],
+                "llm_reason": r["llm_reasoning"],
+                "tier": r["agreement_tier"],
+                "label": r["tier_label"],
+                "prio": r["review_priority"],
+            }
+        )
+    await db.commit()
+

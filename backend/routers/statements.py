@@ -91,3 +91,19 @@ async def upload_statement(
     await db.commit()
     return {"statement_id": str(stmt_id), "rows_parsed": len(txns),
             "bank": meta.get("bank_name"), "status": "PARSED"}
+
+@router.get("")
+async def list_statements(
+    case_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        text("""SELECT original_filename AS filename, bank_name AS bank,
+                       parse_status AS status, row_count AS rows_parsed, parse_error AS error
+                FROM statements
+                WHERE case_id = :cid
+                ORDER BY uploaded_at DESC"""),
+        {"cid": case_id}
+    )
+    return [dict(r._mapping) for r in result.fetchall()]

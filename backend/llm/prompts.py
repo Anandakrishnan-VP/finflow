@@ -25,3 +25,17 @@ Respond ONLY with raw JSON:
 {"query_type":"transaction_filter","filters":{"account_ids":[],"date_from":null,
 "date_to":null,"amount_min":null,"amount_max":null,"txn_type":null,"flags":[]},"limit":100}
 """
+
+SECOND_OPINION_PROMPT = """
+Analyze the following raw bank transactions for a single account.
+Note: You are blind to any previous algorithmic flags, rules, or risk scores.
+Assess whether the account's behavior is suspicious (e.g. indicates money laundering, layering, structuring, round-tripping, or acting as a mule) or not.
+Data: {DATA}
+Respond ONLY with raw JSON in this format:
+{
+  "verdict": "SUSPICIOUS" | "NOT_SUSPICIOUS",
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "reasoning": "A concise explanation of the patterns, or lack thereof, in the transactions."
+}
+"""
+

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { apiClient } from '../api/client';
 
 const BANKS = ['sbi', 'hdfc', 'axis', 'kotak', 'icici', 'yes_bank', 'pnb', 'canara', 'union_bank'];
@@ -8,6 +8,24 @@ export default function UploadPanel({ caseId, onUploaded }) {
   const [statements, setStatements] = useState([]);
   const [bankOverride, setBankOverride] = useState({});
   const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const fetchStatements = async () => {
+      try {
+        const { data } = await apiClient.get(`/cases/${caseId}/statements`);
+        if (active) {
+          setStatements(data);
+        }
+      } catch (err) {
+        console.error('Failed to load statements', err);
+      }
+    };
+    fetchStatements();
+    return () => {
+      active = false;
+    };
+  }, [caseId]);
 
   const handleUpload = async () => {
     setUploading(true);
