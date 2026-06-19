@@ -4,10 +4,24 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from security.auth import verify_token
 from routers import auth, cases, statements, analysis, graph
-from routers import entities, reports, watchlist, query, admin, verdicts
+from routers import entities, reports, watchlist, query, admin, verdicts, next_actions, chat, syndicates, annotations, hypothesis, intelligence
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure statements table has progress reporting columns
+    import os
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy import text
+    _db_url = os.getenv("DATABASE_URL", "")
+    if _db_url:
+        try:
+            engine = create_async_engine(_db_url, echo=False)
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE statements ADD COLUMN IF NOT EXISTS parse_progress INTEGER DEFAULT 0;"))
+                await conn.execute(text("ALTER TABLE statements ADD COLUMN IF NOT EXISTS parse_stage VARCHAR(255) DEFAULT 'PENDING';"))
+            await engine.dispose()
+        except Exception as e:
+            print(f"Error initializing database columns: {e}")
     yield
 
 app = FastAPI(
@@ -38,6 +52,12 @@ app.include_router(watchlist.router)
 app.include_router(query.router)
 app.include_router(admin.router)
 app.include_router(verdicts.router)
+app.include_router(next_actions.router)
+app.include_router(chat.router)
+app.include_router(syndicates.router)
+app.include_router(annotations.router)
+app.include_router(hypothesis.router)
+app.include_router(intelligence.router)
 
 @app.websocket("/ws/analysis/{task_id}")
 async def analysis_ws(

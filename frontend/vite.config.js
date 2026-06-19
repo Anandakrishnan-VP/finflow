@@ -6,8 +6,9 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: 'http://backend:8000', changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, '') },
-      '/ws':  { target: 'ws://backend:8000',  changeOrigin: true, ws: true }
+      '/api':  { target: 'http://localhost:8000', changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, '') },
+      '/auth': { target: 'http://localhost:8000', changeOrigin: true },
+      '/ws':   { target: 'ws://localhost:8000',   changeOrigin: true, ws: true }
     }
   }
 })

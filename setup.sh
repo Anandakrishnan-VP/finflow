@@ -7,14 +7,30 @@ command -v docker >/dev/null 2>&1 || { echo "Docker is required."; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose V2 is required."; exit 1; }
 
 # Step 1: .env
+NON_INTERACTIVE=${NON_INTERACTIVE:-false}
+if [ "$1" = "-y" ] || [ "$1" = "--yes" ] || [ "$1" = "--non-interactive" ]; then
+  NON_INTERACTIVE=true
+fi
+
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "Created .env from .env.example. EDIT IT NOW before continuing:"
-  echo "  - POSTGRES_PASSWORD, NEO4J_PASSWORD, SECRET_KEY (openssl rand -hex 32)"
-  echo "  - GROQ_API_KEY (get one free at https://console.groq.com)"
-  echo "  - ADMIN_INITIAL_PASSWORD"
-  read -p "Press Enter once .env is configured..."
+  echo "Created .env from .env.example with template defaults."
+  SEC_KEY=$(openssl rand -hex 32 2>/dev/null || echo "cff26a972bc18b97206bc3a7e15d2807a8782573c09c29451f5d7f464cffcc07")
+  if [ "$(uname)" = "Darwin" ]; then
+    sed -i '' "s/SECRET_KEY=.*/SECRET_KEY=$SEC_KEY/" .env
+  else
+    sed -i "s/SECRET_KEY=.*/SECRET_KEY=$SEC_KEY/" .env
+  fi
+
+  if [ "$NON_INTERACTIVE" = "false" ]; then
+    echo "EDIT IT NOW before continuing if you want Groq/Live AI keys:"
+    echo "  - POSTGRES_PASSWORD, NEO4J_PASSWORD, SECRET_KEY"
+    echo "  - GROQ_API_KEY (get one free at https://console.groq.com)"
+    echo "  - ADMIN_INITIAL_PASSWORD"
+    read -p "Press Enter once .env is configured..."
+  fi
 fi
+
 
 # Step 2: TLS cert (RULE 12: HTTPS only, no plain HTTP)
 mkdir -p nginx/certs
@@ -52,19 +68,21 @@ docker compose run --rm backend alembic upgrade head
 echo "Starting backend, worker, frontend, nginx..."
 docker compose up -d
 
+echo "Downloading spaCy language model..."
+docker compose exec backend python -m spacy download en_core_web_sm
+
 # Step 8: Train ML models
-echo "Training Isolation Forest model..."
+echo "Training ML models (Isolation Forest + LightGBM)..."
 docker compose exec backend python scripts/train_models.py
 
-# Step 9: Model hashes — ACTION REQUIRED
-echo ""
-echo "=== ACTION REQUIRED ==="
-echo "Paste the following into backend/ml/model_loader.py MODEL_HASHES, then continue:"
+# Step 9: Compute model hashes (automatically writes to hashes.json)
+echo "Computing model hashes..."
 docker compose exec backend python scripts/compute_hashes.py
-echo ""
-read -p "Press Enter once you've pasted the hash and saved the file..."
+
+echo "Restarting backend and worker to load fresh models..."
 docker compose restart backend worker
-sleep 10
+sleep 5
+
 
 # [O1 FIX] No Ollama model pull step exists here. Groq is cloud-hosted — nothing to pull.
 

@@ -5,7 +5,7 @@ import urllib3
 # Suppress insecure request warning for local self-signed cert
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_URL = "https://localhost:3000/api"
+BASE_URL = "http://localhost:8000"
 username = "admin"
 password = "admin_strong_pass123"
 

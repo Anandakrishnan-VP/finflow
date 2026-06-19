@@ -82,3 +82,72 @@ async def generate_brief(case_id: str, current_user=Depends(get_current_user),
                                     {"name": current_user.get("username",""), "badge": ""})
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="brief_{case_id[:8]}.pdf"'})
+
+
+@router.post("/{case_id}/reports/officer-brief")
+async def generate_officer_brief_pdf(
+    case_id: str,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    case_row = await db.execute(text("SELECT * FROM cases WHERE id=:cid"), {"cid": case_id})
+    case = dict((case_row.fetchone() or {})._mapping)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    verdicts_q = await db.execute(
+        text("""
+            SELECT account_id, composite_score, role_label, tier_label
+            FROM account_verdicts
+            WHERE case_id = :cid
+            ORDER BY composite_score DESC
+        """),
+        {"cid": case_id}
+    )
+    verdicts = [dict(r._mapping) for r in verdicts_q.fetchall()]
+
+    alert_q = await db.execute(
+        text("""
+            SELECT account_id, flag, confidence
+            FROM alerts
+            WHERE case_id = :cid
+            ORDER BY confidence DESC
+        """),
+        {"cid": case_id}
+    )
+    alerts = [dict(r._mapping) for r in alert_q.fetchall()]
+
+    next_actions_q = await db.execute(
+        text("""
+            SELECT account_id, action_text, completed
+            FROM case_next_actions
+            WHERE case_id = :cid
+            ORDER BY completed ASC, account_id ASC
+        """),
+        {"cid": case_id}
+    )
+    next_actions = [dict(r._mapping) for r in next_actions_q.fetchall()]
+
+    annotations_q = await db.execute(
+        text("""
+            SELECT ca.annotation, ca.created_at, u.username
+            FROM case_annotations ca
+            LEFT JOIN users u ON ca.author_id = u.id
+            WHERE ca.case_id = :cid
+            ORDER BY ca.created_at DESC
+        """),
+        {"cid": case_id}
+    )
+    annotations = [dict(r._mapping) for r in annotations_q.fetchall()]
+
+    from reports.officer_brief import generate_officer_brief
+    pdf_bytes = generate_officer_brief(
+        case, verdicts, alerts, next_actions, annotations,
+        {"name": current_user.get("username", "")}
+    )
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="officer_brief_{case_id[:8]}.pdf"'}
+    )

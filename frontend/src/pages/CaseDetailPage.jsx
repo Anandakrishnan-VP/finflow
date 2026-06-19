@@ -14,13 +14,15 @@ import TimelineChart from '../components/TimelineChart';
 import LlmModeBadge from '../components/LlmModeBadge';
 import VerdictsPanel from '../components/VerdictsPanel';
 import BenfordCard from '../components/BenfordCard';
+import ExecutiveSummaryPanel from '../components/ExecutiveSummaryPanel';
+import HypothesisEngine from '../components/HypothesisEngine';
 
-const TABS = ['Overview', 'Upload', 'Transactions', 'Alerts', 'Verdicts', 'Graph', 'Money Trail', 'Entities', 'Ask AI', 'Reports'];
+const TABS = ['Executive Summary', 'Overview', 'Upload', 'Transactions', 'Alerts', 'Verdicts', 'Graph', 'Money Trail', 'Entities', 'Ask AI', 'Reports', 'Hypothesis'];
 
 
 export default function CaseDetailPage() {
   const { caseId } = useParams();
-  const [activeTab, setActiveTab] = useState('Overview');
+  const [activeTab, setActiveTab] = useState('Executive Summary');
   const [caseInfo, setCaseInfo]   = useState(null);
   const [summary, setSummary]     = useState(null);
   const [taskId, setTaskId]       = useState(null);
@@ -91,6 +93,8 @@ export default function CaseDetailPage() {
           <TimelineChart caseId={caseId} />
         </div>
       )}
+      
+      {activeTab === 'Executive Summary' && <ExecutiveSummaryPanel caseId={caseId} />}
 
       {activeTab === 'Upload'       && <UploadPanel caseId={caseId} onUploaded={loadSummary} />}
       {activeTab === 'Transactions' && <TransactionsTable caseId={caseId} />}
@@ -101,6 +105,7 @@ export default function CaseDetailPage() {
       {activeTab === 'Entities'     && <EntitiesPanel caseId={caseId} />}
       {activeTab === 'Ask AI'       && <NLQueryPanel caseId={caseId} />}
       {activeTab === 'Reports'      && <ReportsPanel caseId={caseId} />}
+      {activeTab === 'Hypothesis'   && <HypothesisEngine caseId={caseId} />}
     </div>
   );
 }

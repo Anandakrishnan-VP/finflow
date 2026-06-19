@@ -28,7 +28,7 @@ async def get_case_verdicts(
         text("""
             SELECT account_id, composite_score, score_breakdown, algo_verdict,
                    llm_verdict, llm_confidence, llm_reasoning, agreement_tier,
-                   tier_label, review_priority, reviewed_at
+                   tier_label, review_priority, reviewed_at, role_label
             FROM account_verdicts
             WHERE case_id = :cid
             ORDER BY review_priority ASC, composite_score DESC
@@ -74,10 +74,10 @@ async def trigger_second_opinion(
     On-demand blind LLM audit for a specific account.
     Fuses the new LLM verdict with the existing algo verdict and updates DB.
     """
-    # 1. Fetch existing verdict row to get algo_verdict and composite score
+    # 1. Fetch existing verdict row to get algo_verdict, composite score, score_breakdown, and role_label
     verdict_q = await db.execute(
         text("""
-            SELECT algo_verdict, composite_score, score_breakdown
+            SELECT algo_verdict, composite_score, score_breakdown, role_label
             FROM account_verdicts
             WHERE case_id = :cid AND account_id = :aid
         """),
@@ -90,6 +90,7 @@ async def trigger_second_opinion(
     algo_verdict = verdict_row.algo_verdict
     composite_score = verdict_row.composite_score
     score_breakdown = verdict_row.score_breakdown
+    role_label = verdict_row.role_label
 
     # 2. Fetch transactions for this account/case to build payload
     txns_q = await db.execute(
@@ -171,4 +172,5 @@ async def trigger_second_opinion(
         "agreement_tier": fused["agreement_tier"],
         "tier_label": fused["tier_label"],
         "review_priority": fused["review_priority"],
+        "role_label": role_label,
     }

@@ -26,6 +26,8 @@ class TransactionFlag(str, Enum):
     WATCHLIST_HIT        = "WATCHLIST_HIT"
     BALANCE_MISMATCH     = "BALANCE_MISMATCH"
     HIDDEN_TXN_SUSPECTED = "HIDDEN_TXN_SUSPECTED"
+    COORDINATED_NARRATION = "COORDINATED_NARRATION"
+    CUSUM_BREAK          = "CUSUM_BREAK"
 
 class UniversalTransaction(BaseModel):
     """CRITICAL: Every monetary field is Decimal. Never float."""
