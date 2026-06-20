@@ -6,6 +6,7 @@ export default function DashboardPage() {
   const [cases, setCases] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ case_number: '', title: '', description: '' });
+  const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
 
   const load = () => apiClient.get('/cases').then((r) => setCases(r.data));
@@ -13,9 +14,28 @@ export default function DashboardPage() {
 
   const createCase = async (e) => {
     e.preventDefault();
-    const { data } = await apiClient.post('/cases', form);
-    setShowCreate(false);
-    navigate(`/cases/${data.id}`);
+    if (creating) return;
+    setCreating(true);
+    try {
+      const { data } = await apiClient.post('/cases', form);
+      setShowCreate(false);
+      navigate(`/cases/${data.id}`);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to create case. Case number must be unique.");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const archiveCase = async (e, id) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete/archive this case?")) return;
+    try {
+      await apiClient.patch(`/cases/${id}/archive`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to archive case. Make sure you are logged in as ADMIN.");
+    }
   };
 
   return (
@@ -28,16 +48,29 @@ export default function DashboardPage() {
 
       <div className="grid gap-3">
         {cases.map((c) => (
-          <button key={c.id} onClick={() => navigate(`/cases/${c.id}`)}
-                  className="text-left bg-white border border-slate-200 rounded-lg p-4 hover:border-slate-400 transition">
-            <div className="flex items-center justify-between">
-              <span className="font-medium text-slate-900">{c.case_number} — {c.title}</span>
-              <span className="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600">{c.status}</span>
+          <div key={c.id} onClick={() => navigate(`/cases/${c.id}`)}
+               className="text-left bg-white border border-slate-200 rounded-lg p-4 hover:border-slate-400 hover:shadow-sm cursor-pointer transition flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <span className="font-semibold text-slate-800">{c.case_number} — {c.title}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                  c.status === 'ANALYZED' 
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                    : 'bg-slate-50 text-slate-600 border border-slate-100'
+                }`}>{c.status}</span>
+              </div>
+              <div className="text-xs text-slate-400 mt-1.5">{new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
             </div>
-            <div className="text-xs text-slate-400 mt-1">{new Date(c.created_at).toLocaleDateString()}</div>
-          </button>
+            <button
+              onClick={(e) => archiveCase(e, c.id)}
+              className="text-xs text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-100 rounded-md px-2.5 py-1.5 transition font-semibold"
+              title="Delete / Archive Case"
+            >
+              Delete
+            </button>
+          </div>
         ))}
-        {cases.length === 0 && <div className="text-sm text-slate-400">No cases yet.</div>}
+        {cases.length === 0 && <div className="text-sm text-slate-400 text-center py-12">No cases yet.</div>}
       </div>
 
       {showCreate && (
@@ -56,8 +89,11 @@ export default function DashboardPage() {
                       className="w-full border border-slate-300 rounded px-3 py-2 mb-4 text-sm" rows={3} />
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setShowCreate(false)}
-                      className="text-sm px-4 py-2 text-slate-500">Cancel</button>
-              <button type="submit" className="text-sm px-4 py-2 bg-slate-900 text-white rounded">Create</button>
+                      disabled={creating}
+                      className="text-sm px-4 py-2 text-slate-500 disabled:opacity-40">Cancel</button>
+              <button type="submit" disabled={creating} className="text-sm px-4 py-2 bg-slate-900 text-white rounded disabled:opacity-50">
+                {creating ? 'Creating...' : 'Create'}
+              </button>
             </div>
           </form>
         </div>

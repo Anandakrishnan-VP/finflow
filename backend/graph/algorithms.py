@@ -145,17 +145,7 @@ async def get_cytoscape_data(case_id: str) -> dict:
     try:
         driver = get_neo4j_driver()
         async with driver.session() as session:
-            node_result = await session.run(
-                "MATCH (a:Account {case_id: $cid}) RETURN a", cid=case_id)
-            async for record in node_result:
-                a = record["a"]
-                nodes.append({"data": {
-                    "id": a["account_id"],
-                    "account_id": a["account_id"],
-                    "risk_score": a.get("risk_score", 0.0),
-                    "volume": a.get("total_volume", 1),
-                    "community": a.get("community_id"),
-                }})
+            # 1. Fetch edges first (limit to 500)
             edge_result = await session.run("""
                 MATCH (src:Account {case_id: $cid})-[r:SENT]->(dst:Account {case_id: $cid})
                 RETURN src.account_id AS source, dst.account_id AS target,
@@ -170,6 +160,44 @@ async def get_cytoscape_data(case_id: str) -> dict:
                     "date": record["date"],
                     "narration": record["narration"],
                 }})
+            
+            # 2. Extract active accounts participating in the fetched edges
+            active_node_ids = set()
+            for edge in edges:
+                active_node_ids.add(edge["data"]["source"])
+                active_node_ids.add(edge["data"]["target"])
+                
+            # 3. Retrieve only those active nodes
+            if active_node_ids:
+                node_result = await session.run("""
+                    MATCH (a:Account {case_id: $cid})
+                    WHERE a.account_id IN $nodes
+                    RETURN a
+                """, cid=case_id, nodes=list(active_node_ids))
+                async for record in node_result:
+                    a = record["a"]
+                    nodes.append({"data": {
+                        "id": a["account_id"],
+                        "account_id": a["account_id"],
+                        "risk_score": a.get("risk_score", 0.0),
+                        "volume": a.get("total_volume", 1),
+                        "community": a.get("community_id"),
+                    }})
+            elif not edges:
+                # If there are no transaction edges, return first 100 nodes as fallback
+                node_result = await session.run("""
+                    MATCH (a:Account {case_id: $cid})
+                    RETURN a LIMIT 100
+                """, cid=case_id)
+                async for record in node_result:
+                    a = record["a"]
+                    nodes.append({"data": {
+                        "id": a["account_id"],
+                        "account_id": a["account_id"],
+                        "risk_score": a.get("risk_score", 0.0),
+                        "volume": a.get("total_volume", 1),
+                        "community": a.get("community_id"),
+                    }})
     except Exception as e:
         logger.warning("Cytoscape data loading skipped because Neo4j is unavailable: %s. Using SQL fallback.", e)
         try:
@@ -213,11 +241,6 @@ async def get_cytoscape_data(case_id: str) -> dict:
                         elif entities.get("account_numbers"):
                             counterparty = entities["account_numbers"][0]
                     
-                    if acc_id:
-                        unique_accounts.add(acc_id)
-                    if counterparty:
-                        unique_accounts.add(counterparty)
-                        
                     if acc_id and counterparty:
                         # Determine direction based on DR / CR
                         if txn_type in ("DR", "DEBIT"):
@@ -234,6 +257,16 @@ async def get_cytoscape_data(case_id: str) -> dict:
                             "date": txn_date.isoformat() if txn_date else None,
                             "narration": narration,
                         })
+                        unique_accounts.add(src)
+                        unique_accounts.add(dst)
+                
+                # If no edges, get first 100 accounts from transaction table
+                if not parsed_edges:
+                    accounts_res = await db.execute(
+                        text("SELECT DISTINCT account_id FROM transactions WHERE case_id = :cid LIMIT 100"),
+                        {"cid": case_id}
+                    )
+                    unique_accounts = {r[0] for r in accounts_res.fetchall() if r[0]}
                         
                 # Compute transaction counts (volume) for each account
                 volume_map = {}

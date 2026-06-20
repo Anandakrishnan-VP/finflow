@@ -42,6 +42,7 @@ async def route_file(
     bank_override: Optional[str] = None,
     original_filename: Optional[str] = None,
     progress_callback = None,
+    column_mapping: Optional[dict] = None,
 ) -> tuple[list[UniversalTransaction], dict]:
     """
     Main entry point. Scans for malware, detects bank, routes to parser.
@@ -74,7 +75,7 @@ async def route_file(
     txns = []
 
     # 1. Try implemented bank parsers
-    if bank_key in IMPLEMENTED_BANKS:
+    if bank_key in IMPLEMENTED_BANKS and not column_mapping:
         try:
             if progress_callback:
                 await progress_callback(20, f"Attempting specific parser for {bank_key.upper()}...")
@@ -98,24 +99,25 @@ async def route_file(
         logger.info("Routing file to generic statement parser pipeline (ext=%s)", ext)
         try:
             if ext in (".pdf",):
-                txns = await _generic_parse_pdf(file_path, bank_name, file_hash, progress_callback)
+                txns = await _generic_parse_pdf(file_path, bank_name, file_hash, progress_callback, column_mapping)
             elif ext in (".xlsx", ".xls"):
                 if progress_callback:
                     await progress_callback(30, "Parsing Excel sheets and resolving merged cells...")
-                txns = await _generic_parse_excel(file_path, bank_name, file_hash)
+                txns = await _generic_parse_excel(file_path, bank_name, file_hash, column_mapping)
             elif ext in (".csv",):
                 if progress_callback:
                     await progress_callback(30, "Sniffing CSV delimiters and parsing table...")
-                txns = await _generic_parse_csv(file_path, bank_name, file_hash)
+                txns = await _generic_parse_csv(file_path, bank_name, file_hash, column_mapping)
             elif ext in (".docx",):
                 if progress_callback:
                     await progress_callback(30, "Parsing Word document tables...")
-                txns = await _generic_parse_docx(file_path, bank_name, file_hash)
+                txns = await _generic_parse_docx(file_path, bank_name, file_hash, column_mapping)
             elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".webp", ".bmp"):
                 if progress_callback:
                     await progress_callback(40, "Running OCR on image file...")
                 from parsers.pdf_scanned import parse_image_file
-                txns = await parse_image_file(file_path, bank_name)
+                # Pass column_mapping so UI manual overrides are respected for image files too
+                txns = await parse_image_file(file_path, bank_name, column_mapping=column_mapping)
             else:
                 raise ValueError(f"Unsupported file type: {ext}")
         except Exception as e:
@@ -161,7 +163,7 @@ def _extract_first_page_text(file_path: str, ext: str) -> str:
         pass
     return ""
 
-async def _generic_parse_excel(file_path: str, bank_name: str, file_hash: str) -> list[UniversalTransaction]:
+async def _generic_parse_excel(file_path: str, bank_name: str, file_hash: str, column_mapping: Optional[dict] = None) -> list[UniversalTransaction]:
     ext = Path(file_path).suffix.lower()
     sheets_data = {}
     
@@ -218,9 +220,9 @@ async def _generic_parse_excel(file_path: str, bank_name: str, file_hash: str) -
             
     best_rows = sheets_data[best_sheet_name] if best_sheet_name else []
     from parsers.generic_parser import parse_generic_table
-    return parse_generic_table(best_rows, bank_name, file_hash)
+    return parse_generic_table(best_rows, bank_name, file_hash, column_mapping)
 
-async def _generic_parse_csv(file_path: str, bank_name: str, file_hash: str) -> list[UniversalTransaction]:
+async def _generic_parse_csv(file_path: str, bank_name: str, file_hash: str, column_mapping: Optional[dict] = None) -> list[UniversalTransaction]:
     import csv, chardet
     with open(file_path, "rb") as f:
         sample_bytes = f.read(8192)
@@ -250,9 +252,9 @@ async def _generic_parse_csv(file_path: str, bank_name: str, file_hash: str) -> 
                 rows.append([str(c or "").strip() for c in r])
                 
     from parsers.generic_parser import parse_generic_table
-    return parse_generic_table(rows, bank_name, file_hash)
+    return parse_generic_table(rows, bank_name, file_hash, column_mapping)
 
-async def _generic_parse_docx(file_path: str, bank_name: str, file_hash: str) -> list[UniversalTransaction]:
+async def _generic_parse_docx(file_path: str, bank_name: str, file_hash: str, column_mapping: Optional[dict] = None) -> list[UniversalTransaction]:
     from docx import Document
     doc = Document(file_path)
     rows = []
@@ -262,9 +264,9 @@ async def _generic_parse_docx(file_path: str, bank_name: str, file_hash: str) ->
             if any(row_cells):
                 rows.append(row_cells)
     from parsers.generic_parser import parse_generic_table
-    return parse_generic_table(rows, bank_name, file_hash)
+    return parse_generic_table(rows, bank_name, file_hash, column_mapping)
 
-async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, progress_callback = None) -> list[UniversalTransaction]:
+async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, progress_callback = None, column_mapping: Optional[dict] = None) -> list[UniversalTransaction]:
 
     from parsers.pdf_scanned import is_pdf_scanned, parse_scanned_pdf
     from parsers.generic_parser import parse_generic_table
@@ -275,7 +277,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
         if progress_callback:
             await progress_callback(80, "PDF is scanned. Skipping digital parsing and running OCR fallback...")
         logger.info("PDF is scanned. Skipping digital parsing stages and jumping directly to OCR.")
-        return await parse_scanned_pdf(file_path, bank_name, progress_callback)
+        return await parse_scanned_pdf(file_path, bank_name, progress_callback, column_mapping=column_mapping)
         
     # Try Stage 1: pdfplumber table extraction
     try:
@@ -292,7 +294,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
                         if any(row_cells):
                             rows.append(row_cells)
         if rows:
-            txns = parse_generic_table(rows, bank_name, file_hash)
+            txns = parse_generic_table(rows, bank_name, file_hash, column_mapping)
             if txns:
                 logger.info("Successfully parsed PDF using Stage 1 (pdfplumber table extraction)")
                 return txns
@@ -312,7 +314,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
                 if any(row_cells):
                     rows.append(row_cells)
         if rows:
-            txns = parse_generic_table(rows, bank_name, file_hash)
+            txns = parse_generic_table(rows, bank_name, file_hash, column_mapping)
             if txns:
                 logger.info("Successfully parsed PDF using Stage 2 (camelot lattice mode)")
                 return txns
@@ -332,7 +334,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
                 if any(row_cells):
                     rows.append(row_cells)
         if rows:
-            txns = parse_generic_table(rows, bank_name, file_hash)
+            txns = parse_generic_table(rows, bank_name, file_hash, column_mapping)
             if txns:
                 logger.info("Successfully parsed PDF using Stage 3 (camelot stream mode)")
                 return txns
@@ -361,7 +363,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
                         if len(tokens) >= 2:
                             rows.append(tokens)
         if rows:
-            txns = parse_generic_table(rows, bank_name, file_hash)
+            txns = parse_generic_table(rows, bank_name, file_hash, column_mapping)
             if txns:
                 logger.info("Successfully parsed PDF using Stage 4 (pdfplumber line-by-line regex parsing)")
                 return txns
@@ -372,4 +374,4 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
     if progress_callback:
         await progress_callback(85, "Stage 5/5: Running OCR scanned document fallback...")
     logger.info("All digital parsing stages failed. Falling back to Stage 5 (OCR fallback)")
-    return await parse_scanned_pdf(file_path, bank_name, progress_callback)
+    return await parse_scanned_pdf(file_path, bank_name, progress_callback, column_mapping=column_mapping)

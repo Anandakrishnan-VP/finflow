@@ -19,7 +19,9 @@ DATE_RE = re.compile(r'(\d{1,2})[/\-\.\s](?:\d{1,2}|[A-Za-z]{3,9})[/\-\.\s](\d{2
 DATE_FORMATS = [
     "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
     "%d %b %Y", "%d-%b-%Y", "%d %B %Y", "%d-%B-%Y",
-    "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y"
+    "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y",
+    "%d %b", "%d-%b", "%d.%b", "%d %B", "%d-%B", "%d.%B",
+    "%b %d", "%b-%d", "%B %d", "%B-%d"
 ]
 
 HEADER_PATTERNS = {
@@ -113,10 +115,21 @@ def parse_date(s: str) -> Optional[datetime]:
             return datetime.strptime(s, fmt)
         except ValueError:
             pass
-    # Regex extract date-like parts
+            
+    # 1. Try to find a 3-part date first
     m = re.search(r'(\d{1,2}[/\-\.\s](?:\d{1,2}|[A-Za-z]{3,9})[/\-\.\s]\d{2,4})', s)
     if m:
         date_part = m.group(1)
+        for fmt in DATE_FORMATS:
+            try:
+                return datetime.strptime(date_part, fmt)
+            except ValueError:
+                pass
+                
+    # 2. Try to find a 2-part date (Day + Month)
+    m2 = re.search(r'(\d{1,2}[/\-\.\s](?:[A-Za-z]{3,9}|\d{1,2}))', s)
+    if m2:
+        date_part = m2.group(1)
         for fmt in DATE_FORMATS:
             try:
                 return datetime.strptime(date_part, fmt)
@@ -127,10 +140,11 @@ def parse_date(s: str) -> Optional[datetime]:
 def parse_generic_table(
     rows: list[list[str]],
     bank_name: str,
-    file_hash: str
+    file_hash: str,
+    column_mapping: Optional[dict] = None
 ) -> list[UniversalTransaction]:
     """
-    Parses a list of rows (cells) into UniversalTransactions using dynamic heuristics.
+    Parses a list of rows (cells) into UniversalTransactions using dynamic heuristics or manual overrides.
     Supports multi-line narration merging and mathematical debit/credit correction.
     """
     if not rows:
@@ -140,46 +154,70 @@ def parse_generic_table(
     for r in rows:
         cleaned_rows.append([str(c or "").strip() for c in r])
 
-    # 1. Identify header row with regex fuzzy mapping
-    header_idx = -1
-    best_score = 0
-    header_mapping = {}
+    if column_mapping:
+        logger.info(f"Generic parser: using manual column mapping: {column_mapping}")
+        def get_index(k):
+            val = column_mapping.get(k)
+            if val is None or val == "" or val == "None":
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
 
-    for idx, r in enumerate(cleaned_rows[:50]):
-        score = 0
-        mapping = {}
-        for c_idx, cell in enumerate(r):
-            cell_lower = cell.lower().strip()
-            if not cell_lower:
-                continue
-            for key, patterns in HEADER_PATTERNS.items():
-                for pattern in patterns:
-                    if re.search(pattern, cell_lower):
-                        if key not in mapping:
-                            mapping[key] = c_idx
-                            score += 1
-                            break
-        if score > best_score and score >= 2:
-            best_score = score
-            header_idx = idx
-            header_mapping = mapping
-
-    logger.info(f"Generic parser: detected header at row {header_idx} with score {best_score}. Mapping: {header_mapping}")
-
-    # If no header was detected, we infer columns from cell value profiles
-    if header_idx == -1:
-        header_mapping = infer_column_roles(cleaned_rows)
-        logger.info(f"Generic parser: no header row found. Inferred mapping: {header_mapping}")
+        date_idx = get_index("date")
+        narration_idx = get_index("narration")
+        debit_idx = get_index("debit")
+        credit_idx = get_index("credit")
+        amount_idx = get_index("amount")
+        balance_idx = get_index("balance")
         start_row_idx = 0
+        # If the first row matches headers or is exactly identical to mapping labels, skip it
+        if len(cleaned_rows) > 0:
+            first_row_lower = [c.lower() for c in cleaned_rows[0]]
+            if any(k in first_row_lower for k in ["date", "narration", "debit", "credit", "amount", "balance"]):
+                start_row_idx = 1
     else:
-        start_row_idx = header_idx + 1
+        # 1. Identify header row with regex fuzzy mapping
+        header_idx = -1
+        best_score = 0
+        header_mapping = {}
 
-    date_idx = header_mapping.get("date")
-    narration_idx = header_mapping.get("narration")
-    debit_idx = header_mapping.get("debit")
-    credit_idx = header_mapping.get("credit")
-    amount_idx = header_mapping.get("amount")
-    balance_idx = header_mapping.get("balance")
+        for idx, r in enumerate(cleaned_rows[:50]):
+            score = 0
+            mapping = {}
+            for c_idx, cell in enumerate(r):
+                cell_lower = cell.lower().strip()
+                if not cell_lower:
+                    continue
+                for key, patterns in HEADER_PATTERNS.items():
+                    for pattern in patterns:
+                        if re.search(pattern, cell_lower):
+                            if key not in mapping:
+                                mapping[key] = c_idx
+                                score += 1
+                                break
+            if score > best_score and score >= 2:
+                best_score = score
+                header_idx = idx
+                header_mapping = mapping
+
+        logger.info(f"Generic parser: detected header at row {header_idx} with score {best_score}. Mapping: {header_mapping}")
+
+        # If no header was detected, we infer columns from cell value profiles
+        if header_idx == -1:
+            header_mapping = infer_column_roles(cleaned_rows)
+            logger.info(f"Generic parser: no header row found. Inferred mapping: {header_mapping}")
+            start_row_idx = 0
+        else:
+            start_row_idx = header_idx + 1
+
+        date_idx = header_mapping.get("date")
+        narration_idx = header_mapping.get("narration")
+        debit_idx = header_mapping.get("debit")
+        credit_idx = header_mapping.get("credit")
+        amount_idx = header_mapping.get("amount")
+        balance_idx = header_mapping.get("balance")
 
     if date_idx is None or (debit_idx is None and credit_idx is None and amount_idx is None):
         logger.warning("Generic parser: missing critical columns (date or amount/debit/credit). Cannot parse.")
@@ -298,6 +336,19 @@ def parse_generic_table(
                 elif diff < 0:
                     curr.txn_type = TransactionType.DEBIT
 
+    # Year alignment: if some transactions parsed with current year/2026 due to lack of year in OCR
+    # but the rest of the statement is in a different year, align them.
+    years = [t.txn_date.year for t in txns if t.txn_date and t.txn_date.year not in (datetime.now().year, 2026)]
+    if years:
+        from collections import Counter
+        most_common_year = Counter(years).most_common(1)[0][0]
+        for t in txns:
+            if t.txn_date and t.txn_date.year in (datetime.now().year, 2026):
+                try:
+                    t.txn_date = t.txn_date.replace(year=most_common_year)
+                except ValueError:
+                    pass
+
     return txns
 
 def infer_column_roles(rows: list[list[str]]) -> dict:
@@ -308,15 +359,23 @@ def infer_column_roles(rows: list[list[str]]) -> dict:
     if not rows:
         return {}
 
-    num_cols = len(rows[0])
+    from collections import Counter
+    lengths = [len(r) for r in rows if len(r) >= 2]
+    if not lengths:
+        return {}
+    most_common_len = Counter(lengths).most_common(1)[0][0]
+
+    filtered_rows = [r for r in rows if len(r) == most_common_len]
+    if not filtered_rows:
+        return {}
+
+    num_cols = most_common_len
     date_scores = [0] * num_cols
     numeric_scores = [0] * num_cols
     total_len = [0] * num_cols
     valid_rows = 0
 
-    for r in rows[:100]:
-        if len(r) != num_cols:
-            continue
+    for r in filtered_rows[:100]:
         valid_rows += 1
         for idx, cell in enumerate(r):
             if parse_date(cell):

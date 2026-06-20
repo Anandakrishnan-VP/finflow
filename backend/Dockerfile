@@ -19,7 +19,8 @@ COPY scripts/ ./scripts/
 COPY backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app
+RUN mkdir -p /data/uploads /data/reports
+RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports
 USER finflow
 
 ENTRYPOINT ["/entrypoint.sh"]

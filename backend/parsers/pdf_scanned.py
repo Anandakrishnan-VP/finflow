@@ -46,8 +46,7 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
     2. Upscaling if resolution is low.
     3. Contrast limited adaptive histogram equalization (CLAHE).
     4. Median blur denoising.
-    5. Adaptive Gaussian binarization.
-    6. Hough line skew detection and deskewing.
+    5. Deskewing using Hough lines on binarized image, applying rotation to grayscale.
     """
     try:
         img = cv2.imread(input_path)
@@ -70,7 +69,7 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
         # Denoising
         denoised = cv2.medianBlur(enhanced, 3)
         
-        # Binarization
+        # Binarize ONLY for skew detection
         binarized = cv2.adaptiveThreshold(
             denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
@@ -87,19 +86,23 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
                     angles.append(angle)
                     
         skew_angle = np.median(angles) if angles else 0.0
+        
+        output_img = denoised
         if abs(skew_angle) > 0.5:
             center = (w // 2, h // 2)
             M = cv2.getRotationMatrix2D(center, skew_angle, 1.0)
-            binarized = cv2.warpAffine(binarized, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+            output_img = cv2.warpAffine(denoised, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
             
-        cv2.imwrite(output_path, binarized)
+        cv2.imwrite(output_path, output_img)
         return True
     except Exception as e:
         logger.warning("Image pre-processing failed: %s. Using original image.", e)
         return False
-async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = None) -> list[UniversalTransaction]:
+
+async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = None, column_mapping: dict = None) -> list[UniversalTransaction]:
     """
     Convert each PDF page to image, run advanced preprocessing, run Tesseract, and parse TSV output.
+    If column_mapping is provided (from manual UI mapping), it is passed to the generic table parser.
     """
     import fitz  # PyMuPDF
     doc = fitz.open(file_path)
@@ -124,7 +127,7 @@ async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = 
             success = preprocess_image(tmp_raw.name, tmp_proc.name)
             img_to_ocr = tmp_proc.name if success else tmp_raw.name
             
-        tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng+hin")
+        tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
         
         # Cleanup temp files
         Path(tmp_raw.name).unlink(missing_ok=True)
@@ -133,16 +136,17 @@ async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = 
         if not tsv_text:
             continue
 
-        page_txns = _parse_tsv(tsv_text, bank_name, file_hash)
+        page_txns = _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
         txns.extend(page_txns)
 
     doc.close()
     return txns
 
 
-async def parse_image_file(file_path: str, bank_name: str) -> list[UniversalTransaction]:
+async def parse_image_file(file_path: str, bank_name: str, column_mapping: dict = None) -> list[UniversalTransaction]:
     """
     Run Tesseract OCR directly on image files with preprocessing.
+    If column_mapping is provided, it is passed to the generic table parser.
     """
     file_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
     
@@ -150,17 +154,90 @@ async def parse_image_file(file_path: str, bank_name: str) -> list[UniversalTran
         success = preprocess_image(file_path, tmp_proc.name)
         img_to_ocr = tmp_proc.name if success else file_path
         
-    tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng+hin")
+    tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
     Path(tmp_proc.name).unlink(missing_ok=True)
     
     if not tsv_text:
         return []
-    return _parse_tsv(tsv_text, bank_name, file_hash)
+    return _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
 
-def _parse_tsv(tsv_text: str, bank_name: str, file_hash: str) -> list[UniversalTransaction]:
+def group_words_into_rows(words: list) -> list[list[dict]]:
     """
-    Reconstruct tabular cells from Tesseract TSV using vertical overlap
-    and horizontal proximity.
+    Group OCR words into rows using vertical center-of-mass clustering.
+    Words within 60% of average word height of each other belong to the same row.
+    """
+    if not words:
+        return []
+    words.sort(key=lambda w: w["top"])
+    rows = []
+    curr_row = [words[0]]
+    for w in words[1:]:
+        avg_h = sum(x.get("height", 20) for x in curr_row) / len(curr_row)
+        avg_top = sum(x["top"] for x in curr_row) / len(curr_row)
+        if abs(w["top"] - avg_top) < max(avg_h * 0.65, 10):
+            curr_row.append(w)
+        else:
+            rows.append(sorted(curr_row, key=lambda x: x["left"]))
+            curr_row = [w]
+    rows.append(sorted(curr_row, key=lambda x: x["left"]))
+    return [r for r in rows if r]
+
+
+def detect_column_boundaries(words: list) -> list[int]:
+    """
+    Detect column boundaries using x-axis histogram analysis.
+
+    All words in a given column start at nearly the same x position, forming
+    a peak in the histogram. The gaps (valleys) between those peaks are the
+    column separators. This is the same core technique used by AWS Textract
+    and Azure Form Recognizer for column detection without model training.
+
+    Returns a sorted list of x-pixel boundary positions including 0 and max_x+1.
+    """
+    if not words:
+        return [0, 1]
+    max_x = max(w["left"] + w["width"] for w in words) + 1
+    # Build pixel-level occupancy mask (1 if any word covers that x-pixel)
+    mask = np.zeros(max_x, dtype=np.int32)
+    for w in words:
+        lo = max(0, w["left"])
+        hi = min(max_x, w["left"] + w["width"])
+        mask[lo:hi] += 1
+
+    # Smooth slightly to merge hairline gaps within words
+    kernel_size = max(3, max_x // 300)
+    smoothed = np.convolve(mask.astype(float), np.ones(kernel_size) / kernel_size, mode="same")
+
+    # A column boundary is a contiguous zero-run in the smoothed mask
+    boundaries = [0]
+    in_gap = False
+    gap_start = 0
+    for i, v in enumerate(smoothed):
+        if v < 0.5 and not in_gap:
+            in_gap = True
+            gap_start = i
+        elif v >= 0.5 and in_gap:
+            in_gap = False
+            gap_mid = (gap_start + i) // 2
+            # Ignore gaps narrower than 1% of page width (noise)
+            if gap_mid - boundaries[-1] >= max(8, max_x // 100):
+                boundaries.append(gap_mid)
+    boundaries.append(max_x)
+
+    # Deduplicate and sort
+    boundaries = sorted(set(boundaries))
+    logger.debug("Histogram column boundaries: %s (page_width=%d)", boundaries, max_x)
+    return boundaries
+
+
+def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
+    """
+    Reconstruct tabular rows from Tesseract TSV output using:
+      1. Vertical clustering → groups words into rows.
+      2. Histogram-based column boundary detection → finds column separators
+         from x-axis occupancy valleys across the ENTIRE page (not just
+         adjacent word gaps). This correctly identifies 5–7 columns in
+         bank statement PDFs where adjacent column gaps are narrow.
     """
     lines = tsv_text.strip().split("\n")
     if len(lines) < 2:
@@ -172,15 +249,11 @@ def _parse_tsv(tsv_text: str, bank_name: str, file_hash: str) -> list[UniversalT
         top_idx = headers.index("top")
         width_idx = headers.index("width")
         height_idx = headers.index("height")
-        conf_idx = headers.index("conf")
         text_idx = headers.index("text")
     except ValueError:
         return []
 
     words = []
-    total_conf = 0.0
-    conf_count = 0
-
     for line in lines[1:]:
         parts = line.split("\t")
         if len(parts) <= text_idx:
@@ -193,79 +266,168 @@ def _parse_tsv(tsv_text: str, bank_name: str, file_hash: str) -> list[UniversalT
             top = int(parts[top_idx])
             width = int(parts[width_idx])
             height = int(parts[height_idx])
-            conf = float(parts[conf_idx])
-        except ValueError:
+            words.append({"left": left, "top": top, "width": width, "height": height, "text": text})
+        except (ValueError, IndexError):
             continue
-
-        words.append({
-            "left": left,
-            "top": top,
-            "width": width,
-            "height": height,
-            "conf": conf,
-            "text": text
-        })
-        if conf > 0:
-            total_conf += conf
-            conf_count += 1
 
     if not words:
         return []
 
-    avg_confidence = (total_conf / conf_count) if conf_count > 0 else 0.0
+    # Step 1: Group words into rows
+    rows = group_words_into_rows(words)
 
-    # Sort words by top coordinate
-    words.sort(key=lambda w: w["top"])
+    # Step 2: Detect column boundaries from ALL words across the page
+    col_boundaries = detect_column_boundaries(words)
+    num_cols = max(1, len(col_boundaries) - 1)
 
-    # Group words into rows based on vertical overlap (>40% overlap with average height of the row)
-    rows = []
-    for w in words:
-        placed = False
-        for row in rows:
-            row_top = sum(r["top"] for r in row) / len(row)
-            row_height = sum(r["height"] for r in row) / len(row)
-            row_bottom = row_top + row_height
-
-            w_top = w["top"]
-            w_bottom = w["top"] + w["height"]
-
-            overlap = min(row_bottom, w_bottom) - max(row_top, w_top)
-            min_h = min(row_height, w["height"])
-            if min_h > 0 and (overlap / min_h) > 0.4:
-                row.append(w)
-                placed = True
-                break
-        if not placed:
-            rows.append([w])
-
-    # Sort rows vertically by average top coordinate
-    rows.sort(key=lambda r: sum(w["top"] for w in r) / len(r))
-
-    # Reconstruct cells in each row by combining words separated by small horizontal gaps
+    # Step 3: Assign each word to a column slot, build table rows
     table = []
     for row in rows:
-        row.sort(key=lambda w: w["left"])
-        cells = []
-        current_cell_words = []
+        col_slots: list[list[str]] = [[] for _ in range(num_cols)]
         for w in row:
-            if not current_cell_words:
-                current_cell_words.append(w)
-            else:
-                last_w = current_cell_words[-1]
-                gap = w["left"] - (last_w["left"] + last_w["width"])
-                max_gap = 2.5 * max(w["height"], last_w["height"])
-                if gap < max_gap:
-                    current_cell_words.append(w)
-                else:
-                    cells.append(" ".join(wd["text"] for wd in current_cell_words))
-                    current_cell_words = [w]
-        if current_cell_words:
-            cells.append(" ".join(wd["text"] for wd in current_cell_words))
-        table.append(cells)
+            # Find which column interval this word's left-edge falls into
+            col_idx = num_cols - 1
+            for i in range(len(col_boundaries) - 1):
+                if col_boundaries[i] <= w["left"] < col_boundaries[i + 1]:
+                    col_idx = i
+                    break
+            col_slots[min(col_idx, num_cols - 1)].append(w["text"])
 
-    # Use generic parser to parse this table structure
+        cells = [" ".join(slot) for slot in col_slots]
+        # Remove trailing empty cells
+        while cells and not cells[-1].strip():
+            cells.pop()
+        if cells:
+            table.append(cells)
+
+    return table
+
+
+# Date pattern: matches "2 Jan 2013", "04-01-2013", "2013-01-04", "04/01/2013" etc.
+_DATE_PREFIX_RE = re.compile(
+    r'^(\d{1,2}[\s/\-\.][A-Za-z]{3}[\s/\-\.]\d{2,4}'   # 2 Jan 2013
+    r'|\d{1,2}[\s/\-\.]\d{1,2}[\s/\-\.]\d{2,4}'         # 04/01/2013
+    r'|\d{4}[\-/]\d{2}[\-/]\d{2})'                       # 2013-01-04
+)
+
+# Amount pattern: float with optional commas, at end of a token
+_AMOUNT_RE = re.compile(r'(\d[\d,]*\.\d{2})$')
+
+
+def expand_collapsed_rows(table: list[list[str]]) -> list[list[str]]:
+    """
+    Post-process for scanned PDFs where the histogram finds only 1-2 columns
+    because pixel-level column gaps are absent (columns physically touch).
+
+    Strategy:
+      If the table has 1-2 columns AND any cell starts with a date pattern,
+      attempt to split each cell into [date, narration, amounts...] by:
+        1. Extracting a leading date token.
+        2. Extracting trailing amount tokens (right-aligned numbers).
+        3. Everything in between = narration.
+
+    Returns the table unchanged if expansion is not warranted.
+    """
+    if not table:
+        return table
+
+    # Only trigger if most rows have ≤ 2 columns
+    from collections import Counter
+    col_dist = Counter(len(r) for r in table)
+    most_common_len = col_dist.most_common(1)[0][0]
+    if most_common_len > 3:
+        return table  # Already has proper columns — don't touch
+
+    # Check if any first-cell starts with a date pattern
+    date_rows = sum(1 for r in table if r and _DATE_PREFIX_RE.match(r[0].strip()))
+    if date_rows < 3:
+        return table  # Doesn't look like a transaction table — don't touch
+
+    logger.info(
+        "expand_collapsed_rows: detected collapsed table (%d cols), expanding %d date rows",
+        most_common_len, date_rows
+    )
+
+    expanded = []
+    for row in table:
+        if not row:
+            continue
+        cell0 = row[0].strip()
+        dm = _DATE_PREFIX_RE.match(cell0)
+        if not dm:
+            # No date prefix — keep as-is (header / metadata row)
+            expanded.append(row)
+            continue
+
+        date_str = dm.group(0)
+        rest = cell0[dm.end():].strip()
+
+        # Extract trailing amounts from `rest`
+        amounts = []
+        tokens = rest.split()
+        narration_tokens = []
+        for tok in tokens:
+            if _AMOUNT_RE.match(tok.replace(",", "")) or _AMOUNT_RE.search(tok):
+                amounts.append(tok)
+            else:
+                narration_tokens.append(tok)
+        narration = " ".join(narration_tokens).strip()
+
+        # Also grab amounts from remaining columns
+        for extra_cell in row[1:]:
+            for tok in extra_cell.split():
+                if _AMOUNT_RE.search(tok.replace(",", "")):
+                    amounts.append(tok)
+
+        new_row = [date_str, narration] + amounts
+        expanded.append(new_row)
+
+    return expanded
+
+
+def _parse_tsv(tsv_text: str, bank_name: str, file_hash: str, column_mapping: dict = None) -> list[UniversalTransaction]:
+    """
+    Parse Tesseract TSV output into UniversalTransactions.
+    If column_mapping is provided, the generic parser uses the manual column overrides
+    instead of auto-detecting header and column roles.
+    """
+    table = reconstruct_table_from_tsv(tsv_text)
+    if not table:
+        return []
+
+    # Attempt to expand collapsed single/dual column tables (scanned PDFs with no pixel gaps)
+    if not column_mapping:
+        table = expand_collapsed_rows(table)
+        if not table:
+            return []
+
+
+    lines = tsv_text.strip().split("\n")
+    headers = lines[0].split("\t")
+    try:
+        conf_idx = headers.index("conf")
+    except ValueError:
+        return []
+
+    total_conf = 0.0
+    conf_count = 0
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) <= conf_idx:
+            continue
+        try:
+            conf = float(parts[conf_idx])
+            if conf > 0:
+                total_conf += conf
+                conf_count += 1
+        except ValueError:
+            continue
+
+    avg_confidence = (total_conf / conf_count) if conf_count > 0 else 0.0
+
+    # Use generic parser to parse this table structure, passing column_mapping if provided
     from parsers.generic_parser import parse_generic_table
-    txns = parse_generic_table(table, bank_name, file_hash)
+    txns = parse_generic_table(table, bank_name, file_hash, column_mapping=column_mapping)
 
     # Set OCR confidence and low confidence flags
     for t in txns:
