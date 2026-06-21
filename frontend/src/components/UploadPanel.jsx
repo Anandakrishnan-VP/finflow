@@ -163,7 +163,40 @@ export default function UploadPanel({ caseId, onUploaded }) {
           <tbody>
             {statements.map((s, i) => (
               <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/50">
-                <td className="px-4 py-3 font-medium text-slate-700">{s.filename}</td>
+                <td className="px-4 py-3 font-medium text-slate-700">
+                  <div>{s.filename}</div>
+                  {s.parse_method && (
+                    <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+                      <span className="bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 font-sans uppercase font-bold text-[8px] tracking-wider">
+                        {s.parse_method.replace('_', ' ')}
+                      </span>
+                      {s.parse_quality_score !== null && s.parse_quality_score !== undefined && (
+                        <span className="text-slate-500">
+                          Quality: <strong className="text-slate-700">{Math.round(s.parse_quality_score * 100)}%</strong>
+                        </span>
+                      )}
+                      {s.ocr_confidence_avg !== null && s.ocr_confidence_avg !== undefined && (
+                        <span className="text-slate-500">
+                          OCR: <strong className="text-slate-700">{Math.round(s.ocr_confidence_avg * 100)}%</strong>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {s.status === 'NEEDS_REVIEW' && s.needs_review_reason && (
+                    <div className="text-[10px] text-amber-700 font-semibold bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mt-1.5 max-w-xs break-words">
+                      ⚠️ Needs Review: {s.needs_review_reason}
+                    </div>
+                  )}
+                  {s.parse_warnings && s.parse_warnings.length > 0 && (
+                    <div className="mt-1.5 max-w-xs space-y-1">
+                      {s.parse_warnings.map((w, idx) => (
+                        <div key={idx} className="text-[9px] text-amber-800 bg-amber-50/50 border-l-2 border-amber-400 pl-1.5 py-0.5 rounded-r">
+                          {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-slate-500">{s.bank || '—'}</td>
                 <td className="px-4 py-3">
                   {s.status === 'PROCESSING' || s.status === 'PENDING' ? (
@@ -202,9 +235,38 @@ export default function UploadPanel({ caseId, onUploaded }) {
                       )}
                     </div>
                   )}
-                  {s.error && <div className="text-xs text-red-400 mt-1 max-w-xs break-words">{s.error}</div>}
+                  {s.error && (
+                    <div className="text-xs text-red-500 mt-1 max-w-xs break-words bg-red-50 border border-red-100 rounded-md p-2">
+                      {typeof s.error === 'object' && s.error.case_id ? (
+                        <span>
+                          {s.error.message}{' '}
+                          <a
+                            href={`/cases/${s.error.case_id}`}
+                            className="underline text-blue-600 hover:text-blue-800 font-semibold inline-block"
+                          >
+                            View Case: {s.error.case_title}
+                          </a>
+                        </span>
+                      ) : (
+                        typeof s.error === 'object' ? s.error.message || 'Upload failed' : s.error
+                      )}
+                    </div>
+                  )}
                 </td>
-                <td className="px-4 py-3 text-slate-500 font-mono">{s.rows_parsed ?? '—'}</td>
+                <td className="px-4 py-3 text-slate-500 font-mono text-xs">
+                  {s.rows_parsed !== undefined && s.rows_parsed !== null ? (
+                    <div>
+                      <div className="font-bold text-slate-700">{s.rows_parsed} rows</div>
+                      {(s.extracted_row_count !== undefined || s.duplicate_row_count !== undefined || s.rejected_row_count !== undefined) && (
+                        <div className="text-[10px] text-slate-400 space-y-0.5 mt-1">
+                          {s.extracted_row_count !== null && <div>Extracted: {s.extracted_row_count}</div>}
+                          {s.duplicate_row_count > 0 && <div className="text-amber-600 font-medium">Dupes: {s.duplicate_row_count}</div>}
+                          {s.rejected_row_count > 0 && <div className="text-rose-600 font-medium">Rejected: {s.rejected_row_count}</div>}
+                        </div>
+                      )}
+                    </div>
+                  ) : '—'}
+                </td>
               </tr>
             ))}
           </tbody>

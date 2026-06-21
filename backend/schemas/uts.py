@@ -1,7 +1,7 @@
 from decimal import Decimal
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 class TransactionType(str, Enum):
@@ -50,8 +50,13 @@ class UniversalTransaction(BaseModel):
     counterparty_bank: Optional[str] = None
     narration: str = ""
     ocr_confidence: Optional[float] = None   # 0.0-1.0 — float OK (not money)
-    flags: list[TransactionFlag] = []
+    flags: list[TransactionFlag | str] = Field(default_factory=list)
     risk_score: Optional[float] = None       # 0.0-1.0 — float OK (not money)
+    raw_row_index: Optional[int] = None
+    raw_row_json: Optional[dict] = None
+    parse_confidence: Optional[float] = None
+    parser_name: Optional[str] = None
+    identity_confidence: Optional[float] = None
 
     @field_validator('amount', 'balance_after', mode='before')
     @classmethod
