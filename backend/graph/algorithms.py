@@ -139,162 +139,176 @@ async def detect_circular_flows(case_id: str) -> list[dict]:
         logger.warning("Circular flow detection skipped because Neo4j is unavailable: %s", e)
     return circles
 
-async def get_cytoscape_data(case_id: str) -> dict:
-    """Returns nodes and edges formatted for Cytoscape.js."""
-    nodes, edges = [], []
-    try:
-        driver = get_neo4j_driver()
-        async with driver.session() as session:
-            # 1. Fetch edges first (limit to 500)
-            edge_result = await session.run("""
-                MATCH (src:Account {case_id: $cid})-[r:SENT]->(dst:Account {case_id: $cid})
-                RETURN src.account_id AS source, dst.account_id AS target,
-                       r.amount_str AS amount, r.txn_date AS date, r.narration AS narration
-                LIMIT 500
-            """, cid=case_id)
-            async for record in edge_result:
-                edges.append({"data": {
-                    "source": record["source"],
-                    "target": record["target"],
-                    "amount": record["amount"],
-                    "date": record["date"],
-                    "narration": record["narration"],
-                }})
-            
-            # 2. Extract active accounts participating in the fetched edges
-            active_node_ids = set()
-            for edge in edges:
-                active_node_ids.add(edge["data"]["source"])
-                active_node_ids.add(edge["data"]["target"])
-                
-            # 3. Retrieve only those active nodes
-            if active_node_ids:
-                node_result = await session.run("""
-                    MATCH (a:Account {case_id: $cid})
-                    WHERE a.account_id IN $nodes
-                    RETURN a
-                """, cid=case_id, nodes=list(active_node_ids))
-                async for record in node_result:
-                    a = record["a"]
-                    nodes.append({"data": {
-                        "id": a["account_id"],
-                        "account_id": a["account_id"],
-                        "risk_score": a.get("risk_score", 0.0),
-                        "volume": a.get("total_volume", 1),
-                        "community": a.get("community_id"),
-                    }})
-            elif not edges:
-                # If there are no transaction edges, return first 100 nodes as fallback
-                node_result = await session.run("""
-                    MATCH (a:Account {case_id: $cid})
-                    RETURN a LIMIT 100
-                """, cid=case_id)
-                async for record in node_result:
-                    a = record["a"]
-                    nodes.append({"data": {
-                        "id": a["account_id"],
-                        "account_id": a["account_id"],
-                        "risk_score": a.get("risk_score", 0.0),
-                        "volume": a.get("total_volume", 1),
-                        "community": a.get("community_id"),
-                    }})
-    except Exception as e:
-        logger.warning("Cytoscape data loading skipped because Neo4j is unavailable: %s. Using SQL fallback.", e)
-        try:
-            from database import AsyncSessionLocal
-            from sqlalchemy import text
-            from entity.extractor import extract_entities_from_narration
-            async with AsyncSessionLocal() as db:
-                txns_res = await db.execute(
-                    text("""
-                        SELECT account_id, counterparty_account, amount, txn_date, narration, txn_type 
-                        FROM transactions 
-                        WHERE case_id = :cid
-                        ORDER BY txn_date ASC
-                        LIMIT 500
-                    """),
-                    {"cid": case_id}
-                )
-                txns_rows = txns_res.fetchall()
-                
-                verdicts_res = await db.execute(
-                    text("SELECT account_id, composite_score FROM account_verdicts WHERE case_id = :cid"),
-                    {"cid": case_id}
-                )
-                verdicts_map = {r[0]: float(r[1]) / 100.0 for r in verdicts_res.fetchall()}
-                
-                unique_accounts = set()
-                parsed_edges = []
-                
-                for idx, r in enumerate(txns_rows):
-                    acc_id = r[0]
-                    counterparty = r[1]
-                    amount = r[2]
-                    txn_date = r[3]
-                    narration = r[4] or ""
-                    txn_type = r[5] or "DR"
-                    
-                    if not counterparty:
-                        entities = extract_entities_from_narration(narration)
-                        if entities.get("upi_ids"):
-                            counterparty = entities["upi_ids"][0]
-                        elif entities.get("account_numbers"):
-                            counterparty = entities["account_numbers"][0]
-                    
-                    if acc_id and counterparty:
-                        # Determine direction based on DR / CR
-                        if txn_type in ("DR", "DEBIT"):
-                            src = acc_id
-                            dst = counterparty
-                        else:
-                            src = counterparty
-                            dst = acc_id
-                            
-                        parsed_edges.append({
-                            "source": src,
-                            "target": dst,
-                            "amount": f"₹{float(amount):,.2f}" if amount is not None else "0.00",
-                            "date": txn_date.isoformat() if txn_date else None,
-                            "narration": narration,
-                        })
-                        unique_accounts.add(src)
-                        unique_accounts.add(dst)
-                
-                # If no edges, get first 100 accounts from transaction table
-                if not parsed_edges:
-                    accounts_res = await db.execute(
-                        text("SELECT DISTINCT account_id FROM transactions WHERE case_id = :cid LIMIT 100"),
-                        {"cid": case_id}
-                    )
-                    unique_accounts = {r[0] for r in accounts_res.fetchall() if r[0]}
-                        
-                # Compute transaction counts (volume) for each account
-                volume_map = {}
-                for edge in parsed_edges:
-                    volume_map[edge["source"]] = volume_map.get(edge["source"], 0) + 1
-                    volume_map[edge["target"]] = volume_map.get(edge["target"], 0) + 1
-                    
-                for acc in unique_accounts:
-                    nodes.append({"data": {
-                        "id": acc,
-                        "account_id": acc,
-                        "risk_score": verdicts_map.get(acc, 0.0),
-                        "volume": volume_map.get(acc, 1),
-                        "community": 0,
-                    }})
-                    
-                for idx, edge in enumerate(parsed_edges):
-                    edges.append({"data": {
-                        "id": f"sql-edge-{idx}",
-                        "source": edge["source"],
-                        "target": edge["target"],
-                        "amount": edge["amount"],
-                        "date": edge["date"],
-                        "narration": edge["narration"],
-                    }})
-        except Exception as sql_err:
-            logger.error("SQL graph data fallback failed: %s", sql_err)
-    return {"nodes": nodes, "edges": edges}
+async def get_cytoscape_data(
+    case_id: str,
+    db,                      # AsyncSession — needed to join account_verdicts
+    min_amount: float = 0.0,
+    node_limit: int = 150,
+) -> dict:
+    """
+    Returns nodes and edges formatted for Cytoscape.js.
+    RULE 26: edges aggregated by (source, target) pair — sum, count, date range.
+    RULE 30: capped at node_limit by composite_score/volume, with total_node_count
+             returned so the frontend can show "showing X of Y" honestly.
+    Verdict data (composite_score, role_label, agreement_tier) is fetched from
+    Postgres and merged into each node — this is the wiring the old version
+    never did, which is why risk tiers never showed up visually.
+    """
+    from sqlalchemy import text
+    driver = get_neo4j_driver()
+
+    # Step 1: aggregated edges from Neo4j (RULE 26)
+    raw_edges = []
+    async with driver.session() as session:
+        edge_result = await session.run("""
+            MATCH (src:Account {case_id: $cid})-[r:SENT]->(dst:Account {case_id: $cid})
+            WITH src.account_id AS source, dst.account_id AS target,
+                 collect(r) AS rels
+            RETURN source, target,
+                   reduce(s = 0.0, rel IN rels | s + toFloat(rel.amount_str)) AS total_amount,
+                   size(rels) AS txn_count,
+                   [rel IN rels | rel.txn_date][0..3] AS sample_dates,
+                   [rel IN rels | rel.narration][0..3] AS sample_narrations,
+                   [rel IN rels | rel.txn_hash] AS txn_hashes
+        """, cid=case_id)
+        async for record in edge_result:
+            if record["total_amount"] < min_amount:
+                continue
+            raw_edges.append({
+                "source": record["source"], "target": record["target"],
+                "total_amount": record["total_amount"],
+                "txn_count": record["txn_count"],
+                "sample_dates": record["sample_dates"],
+                "sample_narrations": record["sample_narrations"],
+                "txn_hashes": record["txn_hashes"],
+            })
+
+        # Step 2: account list + degree, computed from the same projection
+        node_result = await session.run("""
+            MATCH (a:Account {case_id: $cid})
+            OPTIONAL MATCH (a)-[r:SENT]-()
+            RETURN a.account_id AS account_id, count(r) AS degree
+        """, cid=case_id)
+        degree_map = {}
+        async for record in node_result:
+            degree_map[record["account_id"]] = record["degree"]
+
+    # Step 3: verdict enrichment from Postgres — this is the missing wiring
+    verdict_result = await db.execute(
+        text("""SELECT account_id, composite_score, role_label, agreement_tier,
+                       tier_label, score_breakdown
+                FROM account_verdicts WHERE case_id = :cid"""),
+        {"cid": case_id}
+    )
+    verdict_map = {}
+    for row in verdict_result.fetchall():
+        verdict_map[row.account_id] = {
+            "composite_score": row.composite_score,
+            "role_label": row.role_label,
+            "agreement_tier": row.agreement_tier,
+            "tier_label": row.tier_label,
+        }
+
+    # Step 4: compute total volume per account (for node sizing)
+    volume_map = {}
+    for e in raw_edges:
+        volume_map[e["source"]] = volume_map.get(e["source"], 0) + e["total_amount"]
+        volume_map[e["target"]] = volume_map.get(e["target"], 0) + e["total_amount"]
+
+    # Step 5: rank all accounts, cap to node_limit (RULE 30)
+    all_account_ids = set(degree_map.keys()) | set(volume_map.keys())
+    ranked = sorted(
+        all_account_ids,
+        key=lambda aid: (
+            verdict_map.get(aid, {}).get("composite_score", 0),
+            volume_map.get(aid, 0),
+        ),
+        reverse=True,
+    )
+    total_node_count = len(ranked)
+    kept_ids = set(ranked[:node_limit])
+
+    nodes = []
+    for aid in kept_ids:
+        v = verdict_map.get(aid, {})
+        nodes.append({"data": {
+            "id": aid,
+            "account_id": aid,
+            "degree": degree_map.get(aid, 0),
+            "volume": volume_map.get(aid, 0),
+            "composite_score": v.get("composite_score", 0),
+            "role_label": v.get("role_label"),
+            "agreement_tier": v.get("agreement_tier"),
+            "tier_label": v.get("tier_label"),
+        }})
+
+    edges = []
+    for e in raw_edges:
+        if e["source"] not in kept_ids or e["target"] not in kept_ids:
+            continue
+        edges.append({"data": {
+            "id": f"{e['source']}__{e['target']}",
+            "source": e["source"],
+            "target": e["target"],
+            "total_amount": e["total_amount"],
+            "log_amount": __import__("math").log1p(e["total_amount"]),
+            "txn_count": e["txn_count"],
+            "sample_dates": e["sample_dates"],
+            "sample_narrations": e["sample_narrations"],
+            "txn_hashes": e["txn_hashes"],
+        }})
+
+    # RULE 27 input: degree distribution, computed once here so the frontend
+    # doesn't have to recompute it from scratch
+    degrees = sorted(degree_map.values())
+    median_degree = degrees[len(degrees) // 2] if degrees else 0
+    max_degree = max(degrees) if degrees else 0
+    is_hub_dominated = max_degree > 3 * max(median_degree, 1)
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "total_node_count": total_node_count,
+        "shown_node_count": len(nodes),
+        "is_hub_dominated": is_hub_dominated,
+        "max_degree": max_degree,
+        "median_degree": median_degree,
+    }
+
+
+async def get_flow_data(case_id: str, db, min_amount: float = 0.0) -> dict:
+    """
+    Returns aggregated source->target->value triples for the Sankey flow view.
+    Reuses the same aggregation as get_cytoscape_data (RULE 26) but in the flat
+    edge-list shape d3-sankey expects, plus circular-flow edge IDs so the
+    frontend can highlight round-trip money separately.
+    """
+    cyto = await get_cytoscape_data(case_id, db, min_amount=min_amount, node_limit=25)
+
+    circles = await detect_circular_flows(case_id)
+    circular_accounts = set()
+    for c in circles:
+        circular_accounts.update(c.get("accounts", []))
+
+    flows = []
+    for e in cyto["edges"]:
+        d = e["data"]
+        flows.append({
+            "source": d["source"],
+            "target": d["target"],
+            "value": d["total_amount"],
+            "txn_count": d["txn_count"],
+            "is_circular": d["source"] in circular_accounts and d["target"] in circular_accounts,
+        })
+
+    return {
+        "flows": flows,
+        "node_verdicts": {n["data"]["account_id"]: {
+            "composite_score": n["data"]["composite_score"],
+            "role_label": n["data"]["role_label"],
+        } for n in cyto["nodes"]},
+    }
+
 
 
 async def run_taint_propagation(case_id: str, seed_account_ids: list[str]) -> dict:

@@ -15,7 +15,9 @@
     "cytoscape-cose-bilkent": "^4.1.0",
     "cytoscape-cola": "^2.5.1",
     "axios": "^1.7.7",
-    "recharts": "^2.12.7"
+    "recharts": "^2.12.7",
+    "d3": "^7.9.0",
+    "d3-sankey": "^0.12.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

@@ -1,366 +1,295 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import cytoscape from 'cytoscape';
 import coseBilkent from 'cytoscape-cose-bilkent';
 import { apiClient } from '../api/client';
+import SankeyFlowView from './SankeyFlowView';
 
 cytoscape.use(coseBilkent);
 
+const LABEL_BUDGET = 15;   // RULE 28: only the top N nodes get a visible label
+
 function riskTier(score) {
-  if (score >= 0.7) return 'high';
-  if (score >= 0.3) return 'medium';
+  if (score >= 65) return 'high';
+  if (score >= 30) return 'medium';
   return 'low';
 }
 
+const ROLE_BADGE = {
+  MULE: 'M', AGGREGATOR: 'A', CASH_OUT: 'C', DORMANT_REACTIVATED: 'D',
+};
 
 export default function GraphView({ caseId }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
-  
+  const [raw, setRaw] = useState(null);
+  const [view, setView] = useState('network');       // 'network' | 'flow'
+  const [minAmount, setMinAmount] = useState(0);
+  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
-  const [rawNodes, setRawNodes] = useState([]);
-  const [rawEdges, setRawEdges] = useState([]);
-  
-  // Custom workstation state
-  const [mergedMap, setMergedMap] = useState({}); // source -> target
-  const [customEdges, setCustomEdges] = useState([]); // [{ source, target, amount }]
-  const [annotations, setAnnotations] = useState([]); // persistent notes from database
-  
-  // Input fields state
-  const [mergeSrc, setMergeSrc] = useState('');
-  const [mergeDst, setMergeDst] = useState('');
-  const [edgeSrc, setEdgeSrc] = useState('');
-  const [edgeDst, setEdgeDst] = useState('');
-  const [edgeAmount, setEdgeAmount] = useState('');
-  const [noteText, setNoteText] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
-  // Fetch initial graph and annotations
-  useEffect(() => {
-    apiClient.get(`/cases/${caseId}/graph`).then(({ data }) => {
-      setRawNodes(data.nodes || []);
-      setRawEdges(data.edges || []);
-    });
-    fetchAnnotations();
-  }, [caseId]);
+  // AI Explainer State
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiExplanation, setAiExplanation] = useState('');
+  const [aiError, setAiError] = useState('');
 
-  const fetchAnnotations = () => {
-    apiClient.get(`/cases/${caseId}/annotations`).then(({ data }) => {
-      setAnnotations(data || []);
-    });
+  const generateAiInsights = async () => {
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const response = await apiClient.post(`/cases/${caseId}/graph/explain`);
+      setAiExplanation(response.data.explanation);
+    } catch (err) {
+      console.error(err);
+      setAiError(err.response?.data?.detail || 'Failed to generate AI insights.');
+    } finally {
+      setAiLoading(false);
+    }
   };
 
-  // Derive current node notes map from persistent annotations
-  const nodeNotes = {};
-  annotations.forEach(a => {
-    if (a.account_id) {
-      // Since it's sorted by created_at DESC in router, first note found is the latest one
-      if (!nodeNotes[a.account_id]) {
-        nodeNotes[a.account_id] = a.annotation;
-      }
-    }
-  });
+  const load = (nodeLimit) => {
+    apiClient
+      .get(`/cases/${caseId}/graph`, { params: { min_amount: minAmount, node_limit: nodeLimit } })
+      .then((r) => setRaw(r.data));
+  };
 
-  // Rebuild and initialize Cytoscape when data, merges, custom edges, or notes change
+  useEffect(() => { load(showAll ? 5000 : 150); }, [caseId, minAmount, showAll]); // eslint-disable-line
+
+  // RULE 28: only the top LABEL_BUDGET nodes by composite_score get a label
+  const labeledIds = useMemo(() => {
+    if (!raw) return new Set();
+    const sorted = [...raw.nodes].sort(
+      (a, b) => (b.data.composite_score || 0) - (a.data.composite_score || 0)
+    );
+    return new Set(sorted.slice(0, LABEL_BUDGET).map((n) => n.data.id));
+  }, [raw]);
+
   useEffect(() => {
-    if (rawNodes.length === 0) return;
+    if (!raw || view !== 'network') return;
+    let cy;
 
-    const redirect = (id) => {
-      let current = id;
-      while (mergedMap[current]) {
-        current = mergedMap[current];
-      }
-      return current;
-    };
+    const nodes = raw.nodes.map((n) => ({
+      data: {
+        ...n.data,
+        risk_tier: riskTier(n.data.composite_score || 0),
+        display_label: labeledIds.has(n.data.id) ? n.data.id : '',
+        role_badge: ROLE_BADGE[n.data.role_label] || '',
+      },
+    }));
+    const edges = raw.edges.map((e) => ({ data: e.data }));
 
-    const mergedSources = new Set(Object.keys(mergedMap));
-    
-    // Filter and label nodes
-    const finalNodes = rawNodes
-      .filter(n => !mergedSources.has(n.data.id))
-      .map(n => {
-        const nid = n.data.id;
-        const note = nodeNotes[nid];
-        const label = note ? `${nid}\n(${note})` : nid;
-        return {
-          data: {
-            ...n.data,
-            label: label,
-            risk_tier: riskTier(n.data.risk_score || 0)
-          }
-        };
-      });
+    // Find the max degree node to make sure the central hub is at the center
+    const maxDegree = raw.nodes.reduce((max, n) => Math.max(max, n.data.degree || 0), 0);
 
-    // Remap and filter edges
-    const finalEdges = [];
-    rawEdges.forEach(e => {
-      const newSrc = redirect(e.data.source);
-      const newDst = redirect(e.data.target);
-      if (newSrc !== newDst) {
-        finalEdges.push({
-          data: {
-            ...e.data,
-            source: newSrc,
-            target: newDst
-          }
-        });
-      }
-    });
+    // RULE 27: layout choice depends on topology, not a fixed default
+    const layout = raw.is_hub_dominated
+      ? {
+          name: 'concentric',
+          concentric: (node) => {
+            if (node.data('degree') === maxDegree) return 1000;
+            return node.data('composite_score') || 1;
+          },
+          levelWidth: () => 15,
+          minNodeSpacing: 40,
+          avoidOverlap: true,
+          nodeDimensionsIncludeLabels: true,
+          spacingFactor: 1.5,
+          animate: false,
+        }
+      : { name: 'cose-bilkent', animate: false, nodeRepulsion: 8000 };
 
-    // Add custom connection edges
-    customEdges.forEach((e, idx) => {
-      const newSrc = redirect(e.source);
-      const newDst = redirect(e.target);
-      if (newSrc !== newDst) {
-        finalEdges.push({
-          data: {
-            id: `custom-edge-${idx}`,
-            source: newSrc,
-            target: newDst,
-            amount: e.amount,
-            isCustom: true
-          }
-        });
-      }
-    });
-
-    const cy = cytoscape({
+    cy = cytoscape({
       container: containerRef.current,
-      elements: [...finalNodes, ...finalEdges],
-      layout: { name: 'cose-bilkent', animate: false, nodeRepulsion: 8000 },
+      elements: [...nodes, ...edges],
+      layout,
       style: [
         { selector: 'node', style: {
-            'label': 'data(label)', 
-            'font-size': 9, 
-            'color': '#334155',
-            'width': 'mapData(volume, 1, 50, 28, 64)',
-            'height': 'mapData(volume, 1, 50, 28, 64)',
-            'text-valign': 'bottom', 
-            'text-margin-y': 4,
-            'text-wrap': 'wrap'
+            'label': 'data(display_label)', 'font-size': 9, 'color': 'var(--color-text-secondary)',
+            'width': 'mapData(volume, 0, 10000000, 18, 56)',
+            'height': 'mapData(volume, 0, 10000000, 18, 56)',
+            'text-valign': 'bottom', 'text-margin-y': 4, 'text-wrap': 'none',
         }},
         { selector: 'node[risk_tier="low"]',    style: { 'shape': 'ellipse', 'background-color': '#2563eb' } },
         { selector: 'node[risk_tier="medium"]', style: { 'shape': 'diamond', 'background-color': '#d97706' } },
         { selector: 'node[risk_tier="high"]',   style: { 'shape': 'hexagon', 'background-color': '#dc2626' } },
+        // RULE 29: edge width and opacity scale with log_amount, never flat
         { selector: 'edge', style: {
-            'width': 1.8, 
-            'line-color': '#94a3b8', 
-            'target-arrow-color': '#94a3b8',
-            'target-arrow-shape': 'triangle', 
-            'curve-style': 'bezier',
-            'label': 'data(amount)', 
-            'font-size': 7, 
-            'color': '#475569',
+            'width': 'mapData(log_amount, 5, 18, 0.75, 6)',
+            'opacity': 'mapData(log_amount, 5, 18, 0.25, 0.9)',
+            'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8',
+            'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
         }},
-        { selector: 'edge[isCustom]', style: {
-            'line-style': 'dashed',
-            'line-color': '#4f46e5',
-            'target-arrow-color': '#4f46e5',
-            'width': 2.2
-        }},
-        { selector: ':selected', style: { 'border-width': 3.5, 'border-color': '#0f172a' } },
+        { selector: ':selected', style: { 'border-width': 3, 'border-color': '#0f172a' } },
+        { selector: '.faded', style: { 'opacity': 0.08 } },
+        { selector: '.highlighted', style: { 'border-width': 3, 'border-color': '#0f172a' } },
       ],
     });
 
-    cy.on('tap', 'node', (evt) => {
-      const nodeData = evt.target.data();
-      setSelected({ type: 'node', data: nodeData });
-      setNoteText(nodeNotes[nodeData.id] || '');
+    cy.on('tap', 'node', (evt) => setSelected({ type: 'node', data: evt.target.data() }));
+    cy.on('tap', 'edge', (evt) => setSelected({ type: 'edge', data: evt.target.data() }));
+
+    // Focus mode: double-click isolates the 1-hop neighborhood
+    cy.on('dbltap', 'node', (evt) => {
+      const node = evt.target;
+      const neighborhood = node.closedNeighborhood();
+      cy.elements().difference(neighborhood).addClass('faded');
+      neighborhood.removeClass('faded');
     });
-    
-    cy.on('tap', 'edge', (evt) => {
-      setSelected({ type: 'edge', data: evt.target.data() });
+    cy.on('tap', (evt) => {
+      if (evt.target === cy) cy.elements().removeClass('faded');
     });
 
     cyRef.current = cy;
+    return () => { if (cy) cy.destroy(); };
+  }, [raw, view, labeledIds]);
 
-    return () => {
-      if (cy) cy.destroy();
-    };
-  }, [rawNodes, rawEdges, mergedMap, customEdges, annotations]);
+  // Search: highlight + center on matching node
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.elements().removeClass('highlighted');
+    if (!search) return;
+    const matches = cy.nodes().filter((n) => n.data('id').toLowerCase().includes(search.toLowerCase()));
+    matches.addClass('highlighted');
+    if (matches.length > 0) cy.center(matches);
+  }, [search]);
 
-  // Actions handlers
-  const handleMerge = () => {
-    if (!mergeSrc || !mergeDst || mergeSrc === mergeDst) return;
-    setMergedMap(prev => ({
-      ...prev,
-      [mergeSrc]: mergeDst
-    }));
-    setMergeSrc('');
-    setMergeDst('');
-    setSelected(null);
-  };
-
-  const handleAddEdge = () => {
-    if (!edgeSrc || !edgeDst || edgeSrc === edgeDst) return;
-    setCustomEdges(prev => [
-      ...prev,
-      { source: edgeSrc, target: edgeDst, amount: edgeAmount ? `₹${Number(edgeAmount).toLocaleString()}` : 'Custom' }
-    ]);
-    setEdgeSrc('');
-    setEdgeDst('');
-    setEdgeAmount('');
-  };
-
-  const handleSaveNote = () => {
-    if (!selected || selected.type !== 'node') return;
-    const accountId = selected.data.id;
-    apiClient.post(`/cases/${caseId}/annotations`, {
-      annotation: noteText,
-      account_id: accountId
-    }).then(() => {
-      fetchAnnotations();
-    });
-  };
-
-  const handleResetGraph = () => {
-    setMergedMap({});
-    setCustomEdges([]);
-    setSelected(null);
-  };
-
-  // Extract non-merged active nodes
-  const activeNodeIds = rawNodes
-    .map(n => n.data.id)
-    .filter(id => !mergedMap[id]);
+  if (!raw) return <div className="text-sm text-slate-400 py-8">Loading graph...</div>;
 
   return (
-    <div className="flex gap-4">
-      {/* Canvas */}
-      <div ref={containerRef} className="flex-1 h-[600px] bg-slate-50 border border-slate-200 rounded-xl shadow-inner relative overflow-hidden" />
-      
-      {/* Sidebar Workstation */}
-      <div className="w-80 bg-white border border-slate-200 rounded-xl p-4 text-sm flex flex-col justify-between shadow-sm overflow-y-auto max-h-[600px]">
-        <div>
-          {/* Header */}
-          <div className="font-bold text-slate-800 text-base mb-3 border-b border-slate-100 pb-2">Forensic Workstation</div>
-          
-          {/* Legend */}
-          <div className="mb-4 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-            <div className="font-semibold text-slate-700 text-xs mb-1.5 uppercase tracking-wider">Visual Legend</div>
-            <div className="flex items-center gap-2 mb-1 text-xs text-slate-600">
-              <span className="w-3 h-3 rounded-full bg-blue-600" /> Circle · Low risk
-            </div>
-            <div className="flex items-center gap-2 mb-1 text-xs text-slate-600">
-              <span className="w-3 h-3 bg-amber-600" style={{clipPath:'polygon(50% 0,100% 50%,50% 100%,0 50%)'}} /> Diamond · Medium risk
-            </div>
-            <div className="flex items-center gap-2 mb-1.5 text-xs text-slate-600">
-              <span className="w-3 h-3 bg-red-600" style={{clipPath:'polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)'}} /> Hexagon · High risk
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-600 border-t border-slate-200 pt-1 mt-1">
-              <span className="w-4 h-0.5 border-t-2 border-indigo-600 border-dashed" /> Custom Connection
-            </div>
-          </div>
-
-          {/* Merge Nodes Tool */}
-          <div className="border-t border-slate-100 pt-3">
-            <div className="font-semibold text-slate-700 text-xs mb-1.5 uppercase tracking-wider">Merge Accounts</div>
-            <div className="flex gap-1.5 mb-2">
-              <select
-                className="w-1/2 p-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white"
-                value={mergeSrc}
-                onChange={e => setMergeSrc(e.target.value)}
-              >
-                <option value="">Source...</option>
-                {activeNodeIds.map(id => <option key={id} value={id}>{id}</option>)}
-              </select>
-              <select
-                className="w-1/2 p-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white"
-                value={mergeDst}
-                onChange={e => setMergeDst(e.target.value)}
-              >
-                <option value="">Target...</option>
-                {activeNodeIds.map(id => <option key={id} value={id}>{id}</option>)}
-              </select>
-            </div>
-            <button
-              onClick={handleMerge}
-              disabled={!mergeSrc || !mergeDst || mergeSrc === mergeDst}
-              className="w-full bg-slate-800 text-white font-medium py-1.5 px-3 rounded-lg text-xs hover:bg-slate-700 disabled:opacity-40 transition-opacity"
-            >
-              Merge Source into Target
-            </button>
-          </div>
-
-          {/* Custom Edge Tool */}
-          <div className="border-t border-slate-100 pt-3 mt-3">
-            <div className="font-semibold text-slate-700 text-xs mb-1.5 uppercase tracking-wider">Draw Connection</div>
-            <div className="flex gap-1.5 mb-1.5">
-              <select
-                className="w-1/2 p-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white"
-                value={edgeSrc}
-                onChange={e => setEdgeSrc(e.target.value)}
-              >
-                <option value="">From...</option>
-                {activeNodeIds.map(id => <option key={id} value={id}>{id}</option>)}
-              </select>
-              <select
-                className="w-1/2 p-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white"
-                value={edgeDst}
-                onChange={e => setEdgeDst(e.target.value)}
-              >
-                <option value="">To...</option>
-                {activeNodeIds.map(id => <option key={id} value={id}>{id}</option>)}
-              </select>
-            </div>
-            <input
-              type="number"
-              placeholder="Amount (₹)..."
-              className="w-full p-1.5 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white mb-2"
-              value={edgeAmount}
-              onChange={e => setEdgeAmount(e.target.value)}
-            />
-            <button
-              onClick={handleAddEdge}
-              disabled={!edgeSrc || !edgeDst || edgeSrc === edgeDst}
-              className="w-full bg-indigo-600 text-white font-medium py-1.5 px-3 rounded-lg text-xs hover:bg-indigo-500 disabled:opacity-40 transition-opacity"
-            >
-              Add Custom Connection
-            </button>
-          </div>
-
-          {/* Persistent Annotation Tool */}
-          {selected && selected.type === 'node' && (
-            <div className="border-t border-slate-100 pt-3 mt-3">
-              <div className="font-semibold text-slate-700 text-xs mb-1.5 uppercase tracking-wider">Account Notes</div>
-              <textarea
-                rows={2}
-                className="w-full p-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white mb-1.5"
-                placeholder="Enter persistent note for this account..."
-                value={noteText}
-                onChange={e => setNoteText(e.target.value)}
-              />
-              <button
-                onClick={handleSaveNote}
-                className="w-full bg-blue-600 text-white font-medium py-1.5 px-3 rounded-lg text-xs hover:bg-blue-500 transition-colors"
-              >
-                Save Persistent Note
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Selected Info / Footer */}
-        <div className="mt-4 pt-3 border-t border-slate-100">
-          {selected ? (
-            <div className="mb-3">
-              <div className="font-semibold text-slate-700 mb-1 text-xs uppercase tracking-wider">
-                Selected {selected.type === 'node' ? 'Account' : 'Transaction'}
-              </div>
-              <pre className="text-[10px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 overflow-x-auto max-h-36">
-                {JSON.stringify(selected.data, null, 2)}
-              </pre>
-            </div>
-          ) : (
-            <div className="text-slate-400 text-xs italic mb-3">Click any node or edge to inspect details.</div>
-          )}
-          
-          <button
-            onClick={handleResetGraph}
-            className="w-full bg-rose-600 text-white font-medium py-1.5 px-3 rounded-lg text-xs hover:bg-rose-500 transition-colors"
-          >
-            Reset All Customizations
+    <div>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="flex bg-slate-100 rounded-lg p-0.5">
+          <button onClick={() => setView('network')}
+                  className={`text-xs px-3 py-1.5 rounded-md ${view === 'network' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}>
+            Network
+          </button>
+          <button onClick={() => setView('flow')}
+                  className={`text-xs px-3 py-1.5 rounded-md ${view === 'flow' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}>
+            Flow
           </button>
         </div>
+
+        <input placeholder="Search account..." value={search} onChange={(e) => setSearch(e.target.value)}
+               className="text-xs border border-slate-300 rounded px-2 py-1.5 w-44" />
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-slate-400">Min amount</label>
+          <input type="range" min="0" max="1000000" step="10000" value={minAmount}
+                 onChange={(e) => setMinAmount(Number(e.target.value))} className="w-32" />
+          <span className="text-xs text-slate-400 w-20">
+            ₹{minAmount.toLocaleString('en-IN')}
+          </span>
+        </div>
+
+        {raw.total_node_count > raw.shown_node_count && (
+          <button onClick={() => setShowAll(true)}
+                  className="text-xs bg-amber-50 text-amber-700 rounded px-3 py-1.5">
+            Showing {raw.shown_node_count} of {raw.total_node_count} accounts — show all
+          </button>
+        )}
+      </div>
+
+      {view === 'network' ? (
+        <div className="flex gap-4">
+          <div ref={containerRef} className="flex-1 h-[560px] bg-white border border-slate-200 rounded-lg" />
+          <div className="w-64 bg-white border border-slate-200 rounded-lg p-4 text-sm">
+            <div className="font-medium text-slate-700 mb-2">Legend</div>
+            <div className="flex items-center gap-2 mb-1"><span className="w-3 h-3 rounded-full bg-blue-600" /> Low risk</div>
+            <div className="flex items-center gap-2 mb-1"><span className="w-3 h-3 bg-amber-600" style={{clipPath:'polygon(50% 0,100% 50%,50% 100%,0 50%)'}} /> Medium risk</div>
+            <div className="flex items-center gap-2 mb-3"><span className="w-3 h-3 bg-red-600" style={{clipPath:'polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)'}} /> High risk</div>
+            <div className="text-xs text-slate-400 mb-3">
+              Node size = transaction volume. Edge thickness = transferred amount.
+              Only the top {LABEL_BUDGET} accounts are labeled — double-click any
+              node to focus its neighborhood, click background to reset.
+            </div>
+            {selected ? (
+              <div>
+                <div className="font-medium text-slate-700 mb-1">{selected.type === 'node' ? 'Account' : 'Relationship'}</div>
+                {selected.type === 'node' && selected.data.role_label && (
+                  <div className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded inline-block mb-2">
+                    {selected.data.role_label.replace(/_/g, ' ')}
+                  </div>
+                )}
+                {selected.type === 'edge' && (
+                  <div className="text-xs text-slate-500 mb-2">
+                    {selected.data.txn_count} transaction(s) · ₹{Number(selected.data.total_amount).toLocaleString('en-IN')} total
+                  </div>
+                )}
+                <pre className="text-xs text-slate-500 whitespace-pre-wrap">{JSON.stringify(selected.data, null, 2)}</pre>
+              </div>
+            ) : <div className="text-slate-400 text-xs">Click a node or edge for details.</div>}
+          </div>
+        </div>
+      ) : (
+        <SankeyFlowView caseId={caseId} minAmount={minAmount} />
+      )}
+
+      {/* AI Network Insights Section */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 mt-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🧠</span>
+            <h3 className="text-sm font-bold text-slate-800">AI Graph Explainer & Insights</h3>
+          </div>
+          <button
+            onClick={generateAiInsights}
+            disabled={aiLoading}
+            className={`text-xs font-semibold px-4 py-2 rounded-lg transition-all shadow-sm ${
+              aiLoading
+                ? 'bg-indigo-300 text-white cursor-not-allowed'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white active:scale-95'
+            }`}
+          >
+            {aiLoading ? (
+              <span className="flex items-center gap-1.5">
+                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                Analyzing Network...
+              </span>
+            ) : (
+              'Explain Network Flow'
+            )}
+          </button>
+        </div>
+
+        {aiError && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-3 mb-4">
+            ⚠️ {aiError}
+          </div>
+        )}
+
+        {aiExplanation ? (
+          <div className="bg-white border border-slate-200 rounded-lg p-4 text-xs text-slate-700 leading-relaxed shadow-inner">
+            <div className="prose prose-slate max-w-none prose-xs">
+              {aiExplanation.split('\n').map((line, idx) => {
+                if (line.startsWith('###')) {
+                  return <h4 key={idx} className="font-bold text-slate-800 mt-3 mb-1 text-sm">{line.replace('###', '').trim()}</h4>;
+                }
+                if (line.startsWith('##')) {
+                  return <h3 key={idx} className="font-bold text-slate-800 mt-4 mb-2 text-sm">{line.replace('##', '').trim()}</h3>;
+                }
+                if (line.startsWith('#')) {
+                  return <h2 key={idx} className="font-bold text-slate-900 mt-5 mb-2 text-base">{line.replace('#', '').trim()}</h2>;
+                }
+                if (line.trim().startsWith('-') || line.trim().startsWith('*')) {
+                  return <li key={idx} className="ml-4 list-disc my-1">{line.replace(/^[\s-*]+/, '').trim()}</li>;
+                }
+                if (line.trim()) {
+                  return <p key={idx} className="my-1.5">{line}</p>;
+                }
+                return <div key={idx} className="h-1" />;
+              })}
+            </div>
+          </div>
+        ) : (
+          !aiLoading && (
+            <div className="text-xs text-slate-400 text-center py-6 border border-dashed border-slate-200 rounded-lg bg-white">
+              Click the button to generate an AI explanation of this transaction network, highlighting hubs, risk levels, and circular loops.
+            </div>
+          )
+        )}
       </div>
     </div>
   );
 }
+

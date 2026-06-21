@@ -10,11 +10,14 @@ DEFAULT_SPEC  = {"query_type":"transaction_filter",
                  "filters":{"account_ids":[],"date_from":None,"date_to":None,
                              "amount_min":None,"amount_max":None,"txn_type":None,"flags":[]},"limit":100}
 
-async def nl_to_query_spec(question: str, case_classification: int = 1) -> dict:
+async def nl_to_query_spec(question: str, accounts_context: list = None, case_classification: int = 1) -> dict:
     safe_q = sanitize_for_prompt(question, max_length=500)
-    prompt = NL_QUERY_TO_SPEC_PROMPT.replace("{QUESTION}", safe_q)
+    ctx_str = json.dumps(accounts_context or [], indent=2)
+    prompt = (NL_QUERY_TO_SPEC_PROMPT
+              .replace("{CONTEXT}", ctx_str)
+              .replace("{QUESTION}", safe_q))
     try:
-        raw  = await generate({"_q": safe_q}, prompt, case_classification, "nl_query")
+        raw  = await generate({"_q": safe_q, "accounts": accounts_context or []}, prompt, case_classification, "nl_query")
         spec = _parse_spec(raw)
         if spec.get("query_type") not in ALLOWED_TYPES:
             return DEFAULT_SPEC

@@ -294,10 +294,8 @@ def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
             col_slots[min(col_idx, num_cols - 1)].append(w["text"])
 
         cells = [" ".join(slot) for slot in col_slots]
-        # Remove trailing empty cells
-        while cells and not cells[-1].strip():
-            cells.pop()
-        if cells:
+        # Keep all columns to preserve rectangular structure for downstream parsing
+        if any(c.strip() for c in cells):
             table.append(cells)
 
     return table
@@ -313,6 +311,43 @@ _DATE_PREFIX_RE = re.compile(
 # Amount pattern: float with optional commas, at end of a token
 _AMOUNT_RE = re.compile(r'(\d[\d,]*\.\d{2})$')
 
+def clean_ocr_amount_token(tok: str) -> str | None:
+    """
+    Strips prefix/suffix noise (e.g. parenthetical characters, currency symbols, asterisks)
+    from a token and verifies if it matches a standard decimal or integer number.
+    Replaces common OCR letter misreads (O/o -> 0, I/l -> 1).
+    """
+    cleaned = tok.strip()
+    # Strip any trailing non-alphanumeric/non-digit chars like *, ), ], |, ., etc.
+    cleaned = re.sub(r'[^0-9a-zA-Z]+$', '', cleaned)
+    # Strip any leading non-alphanumeric/non-digit chars
+    cleaned = re.sub(r'^[^0-9a-zA-Z\-]+', '', cleaned)
+    
+    # Check if it ends with CR or DR (case insensitive) and strip it
+    cr_dr_match = re.search(r'(?i)(cr|dr|c|d)$', cleaned)
+    if cr_dr_match:
+        cleaned = cleaned[:cr_dr_match.start()].strip()
+        
+    # Also strip any trailing non-digit chars again (after removing cr/dr)
+    cleaned = re.sub(r'\D+$', '', cleaned)
+    
+    if not cleaned:
+        return None
+
+    # Replace common OCR misreads: O/o -> 0, I/l -> 1
+    if any(c.isdigit() for c in cleaned):
+        cleaned = re.sub(r'\.[oO0][oO0]$', '.00', cleaned)
+        cleaned = re.sub(r'\.[oO0]$', '.0', cleaned)
+        cleaned = cleaned.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1')
+        
+    # Remove commas
+    num_str = cleaned.replace(',', '')
+    
+    # Must match a standard float or integer:
+    if re.match(r'^\-?\d+(\.\d+)?$', num_str):
+        return cleaned
+    return None
+
 
 def expand_collapsed_rows(table: list[list[str]]) -> list[list[str]]:
     """
@@ -321,26 +356,35 @@ def expand_collapsed_rows(table: list[list[str]]) -> list[list[str]]:
 
     Strategy:
       If the table has 1-2 columns AND any cell starts with a date pattern,
-      attempt to split each cell into [date, narration, amounts...] by:
-        1. Extracting a leading date token.
-        2. Extracting trailing amount tokens (right-aligned numbers).
+      attempt to split each cell into [date, narration, debit, credit, balance] by:
+        1. Extracting a leading date token from the joined row text.
+        2. Extracting trailing amount tokens (right-aligned numbers) using right-to-left scan.
         3. Everything in between = narration.
+        4. Classify amounts into Debit, Credit, and Balance.
+        5. Prepend standard headers ["Date", "Narration", "Debit", "Credit", "Balance"].
 
     Returns the table unchanged if expansion is not warranted.
     """
     if not table:
         return table
 
-    # Only trigger if most rows have ≤ 2 columns
+    # Only trigger if most rows have <= 2 columns (or if the table is collapsed)
     from collections import Counter
     col_dist = Counter(len(r) for r in table)
+    if not col_dist:
+        return table
     most_common_len = col_dist.most_common(1)[0][0]
     if most_common_len > 3:
         return table  # Already has proper columns — don't touch
 
-    # Check if any first-cell starts with a date pattern
-    date_rows = sum(1 for r in table if r and _DATE_PREFIX_RE.match(r[0].strip()))
-    if date_rows < 3:
+    # Helper: Check if a joined row starts with or contains a date pattern
+    def get_row_date_match(row: list[str]):
+        row_text = " ".join(c for c in row if c).strip()
+        return _DATE_PREFIX_RE.match(row_text)
+
+    # Count how many rows have a valid date prefix
+    date_rows = sum(1 for r in table if get_row_date_match(r))
+    if date_rows < 2:  # Lowered slightly to be more robust for small statements
         return table  # Doesn't look like a transaction table — don't touch
 
     logger.info(
@@ -348,41 +392,94 @@ def expand_collapsed_rows(table: list[list[str]]) -> list[list[str]]:
         most_common_len, date_rows
     )
 
-    expanded = []
+    credit_keywords = {"credit", "cr", "deposit", "dep", "refund", "salary", "interest", "received", "credited"}
+
+    expanded = [["Date", "Narration", "Debit", "Credit", "Balance"]]
     for row in table:
         if not row:
             continue
-        cell0 = row[0].strip()
-        dm = _DATE_PREFIX_RE.match(cell0)
+        
+        row_text = " ".join(c for c in row if c).strip()
+        dm = _DATE_PREFIX_RE.match(row_text)
         if not dm:
-            # No date prefix — keep as-is (header / metadata row)
-            expanded.append(row)
+            # Keep header/metadata rows as-is, but pad them to 5 columns
+            non_empty = [c for c in row if c.strip()]
+            if non_empty:
+                val = " ".join(non_empty)
+                expanded.append(["", val, "", "", ""])
             continue
 
         date_str = dm.group(0)
-        rest = cell0[dm.end():].strip()
+        rest = row_text[dm.end():].strip()
 
-        # Extract trailing amounts from `rest`
-        amounts = []
+        # Split remaining text into tokens
         tokens = rest.split()
+        amounts = []
         narration_tokens = []
-        for tok in tokens:
-            if _AMOUNT_RE.match(tok.replace(",", "")) or _AMOUNT_RE.search(tok):
-                amounts.append(tok)
+
+        # Right-to-left scan to separate trailing amounts from narration
+        in_amounts = True
+        for tok in reversed(tokens):
+            if not in_amounts:
+                narration_tokens.insert(0, tok)
+                continue
+                
+            cleaned = clean_ocr_amount_token(tok)
+            if cleaned:
+                # If we already have 2 amounts, the 3rd one must have a decimal point to be accepted
+                # (to avoid capturing ATM IDs, dates, or other integer codes from narration)
+                if len(amounts) >= 2 and "." not in cleaned:
+                    in_amounts = False
+                    narration_tokens.insert(0, tok)
+                else:
+                    amounts.insert(0, cleaned)
             else:
-                narration_tokens.append(tok)
+                in_amounts = False
+                narration_tokens.insert(0, tok)
+
         narration = " ".join(narration_tokens).strip()
 
-        # Also grab amounts from remaining columns
-        for extra_cell in row[1:]:
-            for tok in extra_cell.split():
-                if _AMOUNT_RE.search(tok.replace(",", "")):
-                    amounts.append(tok)
+        # Classify amounts into Debit, Credit, Balance
+        debit = ""
+        credit = ""
+        balance = ""
 
-        new_row = [date_str, narration] + amounts
-        expanded.append(new_row)
+        # Lowercase narration for credit check
+        narration_lower = narration.lower()
+        has_credit_kw = any(kw in narration_lower for kw in credit_keywords) or "cr" in [t.lower() for t in tokens]
+
+        if len(amounts) == 1:
+            amt = amounts[0]
+            amt_lower = amt.lower()
+            if "cr" in amt_lower:
+                credit = amt
+            elif "dr" in amt_lower:
+                debit = amt
+            elif has_credit_kw:
+                credit = amt
+            else:
+                debit = amt
+        elif len(amounts) == 2:
+            amt1, amt2 = amounts[0], amounts[1]
+            balance = amt2
+            amt1_lower = amt1.lower()
+            if "cr" in amt1_lower:
+                credit = amt1
+            elif "dr" in amt1_lower:
+                debit = amt1
+            elif has_credit_kw:
+                credit = amt1
+            else:
+                debit = amt1
+        elif len(amounts) >= 3:
+            debit = amounts[0]
+            credit = amounts[1]
+            balance = amounts[-1]
+
+        expanded.append([date_str, narration, debit, credit, balance])
 
     return expanded
+
 
 
 def _parse_tsv(tsv_text: str, bank_name: str, file_hash: str, column_mapping: dict = None) -> list[UniversalTransaction]:

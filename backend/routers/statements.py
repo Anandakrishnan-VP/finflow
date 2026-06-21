@@ -238,17 +238,18 @@ async def get_file_preview(file_path: str) -> list[list[str]]:
                                 
                                 table = reconstruct_table_from_tsv(tsv_text)
                                 if table:
-                                    # Filter rows to only keep the most common column count for visual layout alignment
-                                    lengths = [len(r) for r in table if len(r) >= 3]
-                                    if not lengths:
-                                        lengths = [len(r) for r in table if len(r) >= 2]
-                                    if lengths:
-                                        most_common_len = Counter(lengths).most_common(1)[0][0]
+                                    # 1. Run collapsed row expansion to reveal proper columns if they were merged
+                                    from parsers.pdf_scanned import expand_collapsed_rows
+                                    table = expand_collapsed_rows(table)
+                                    
+                                    # 2. Pad rows to maximum row length to maintain a clean rectangular grid
+                                    max_len = max(len(r) for r in table) if table else 0
+                                    if max_len > 0:
                                         for r in table:
-                                            if len(r) == most_common_len:
-                                                rows.append(r)
-                                                if len(rows) >= 20:
-                                                    break
+                                            padded_row = r + [""] * (max_len - len(r))
+                                            rows.append(padded_row)
+                                            if len(rows) >= 40:
+                                                break
         except Exception as e:
             logger.warning("Failed to generate PDF preview via digital/OCR pipeline: %s", e)
     return rows
