@@ -5,7 +5,7 @@ from .sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "template")
 LLM_MODEL    = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     upload_dir: str = "/data/uploads"
     report_dir: str = "/data/reports"
     model_dir: str = "/app/models"
-    llm_provider: str = "groq"
+    llm_provider: str = "template"
     llm_model: str = "llama-3.1-8b-instant"
     groq_api_key: str = ""
     tsa_url: str = "https://freetsa.org/tsr"

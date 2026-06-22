@@ -1,6 +1,8 @@
 from celery_app import celery_app
 from asgiref.sync import async_to_sync
 import logging
+import os
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -35,24 +37,28 @@ def analyze_case_task(self, case_id: str):
         raise
 
 async def _run_analysis_pipeline(task_self, case_id: str, task_id: str):
-    import os
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
-    from sqlalchemy import text
 
-    def update(pct: int, stage: str):
-        task_self.update_state(task_id=task_id, state="PROGRESS", meta={"progress": pct, "stage": stage})
-
-    # [FIX C3]: Create engine INSIDE task — not at module level
-    # Outside Docker, DATABASE_URL env var may be empty; fall back to the
-    # module-level AsyncSessionLocal which is already correctly configured.
     _db_url = os.getenv("DATABASE_URL", "")
+    engine = None
     if _db_url:
         engine = create_async_engine(_db_url, echo=False)
         Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     else:
-        # Running on host (eager mode) — reuse the already-configured session
-        from database import AsyncSessionLocal as Session  # noqa
+        from database import AsyncSessionLocal as Session
+
+    try:
+        await _run_analysis_pipeline_core(task_self, case_id, task_id, Session)
+    finally:
+        if engine:
+            await engine.dispose()
+
+async def _run_analysis_pipeline_core(task_self, case_id: str, task_id: str, Session):
+    from sqlalchemy import text
+
+    def update(pct: int, stage: str):
+        task_self.update_state(task_id=task_id, state="PROGRESS", meta={"progress": pct, "stage": stage})
 
     async with Session() as db:
         # Update case status to ANALYZING
@@ -82,20 +88,27 @@ async def _run_analysis_pipeline(task_self, case_id: str, task_id: str):
         update(25, "Running enrichment")
         from entity.extractor import enrich_transactions_with_entities
         transactions = enrich_transactions_with_entities(transactions)
-        for t in transactions:
-            if t.counterparty_account or t.counterparty_name:
-                await db.execute(
-                    text("""
-                        UPDATE transactions 
-                        SET counterparty_account = :cacc, counterparty_name = :cname
-                        WHERE txn_hash = :hash
-                    """),
-                    {
-                        "cacc": t.counterparty_account,
-                        "cname": t.counterparty_name,
-                        "hash": t.txn_hash
-                    }
-                )
+        # Bulk update counterparty enrichment data
+        update_data = [
+            {
+                "cacc": t.counterparty_account,
+                "cname": t.counterparty_name,
+                "hash": t.txn_hash
+            }
+            for t in transactions
+            if t.counterparty_account or t.counterparty_name
+        ]
+        chunk_size = 10000
+        for i in range(0, len(update_data), chunk_size):
+            chunk = update_data[i:i+chunk_size]
+            await db.execute(
+                text("""
+                    UPDATE transactions 
+                    SET counterparty_account = :cacc, counterparty_name = :cname
+                    WHERE txn_hash = :hash
+                """),
+                chunk
+            )
         await db.commit()
 
         update(30, "Checking watchlist")
@@ -161,16 +174,25 @@ async def _run_analysis_pipeline(task_self, case_id: str, task_id: str):
         from engine.risk_fusion import compute_composite_scores, select_accounts_for_llm_review
         composite_results = compute_composite_scores(transactions, taint_scores, betweenness_scores)
 
+        # Build transactions-by-account mapping
+        from collections import defaultdict
+        txns_by_acc = defaultdict(list)
+        for t in transactions:
+            txns_by_acc[t.account_id].append(t)
+
+        # Update Neo4j nodes with GDS community IDs, composite risk scores, and transaction volumes
+        try:
+            from graph.populator import update_graph_metrics
+            await update_graph_metrics(case_id, graph_results.get("communities", {}), composite_results, txns_by_acc)
+        except Exception as graph_upd_err:
+            logger.warning("Failed to update Neo4j node metrics (ignoring): %s", graph_upd_err)
+
         # Select review pool
         llm_pool = select_accounts_for_llm_review(composite_results)
 
         update(80, f"Running blind LLM second opinions on {len(llm_pool)} accounts")
         from llm.second_opinion import get_second_opinion
         from engine.verdict_fusion import fuse_verdict
-        from collections import defaultdict
-        txns_by_acc = defaultdict(list)
-        for t in transactions:
-            txns_by_acc[t.account_id].append(t)
 
         verdict_rows = []
         for account_id, res in composite_results.items():
@@ -254,7 +276,6 @@ async def _run_analysis_pipeline(task_self, case_id: str, task_id: str):
         )
         await db.commit()
 
-    await engine.dispose()
     update(100, "Complete")
 
 async def _verify_statement_hashes(db, case_id: str) -> list:
@@ -319,56 +340,78 @@ async def _load_transactions(db, case_id: str) -> list:
 async def _save_alerts(db, case_id: str, transactions, graph_results: dict, circles: list):
     from sqlalchemy import text
     import json
+    # Truncate old alerts for this case to avoid duplicates
+    await db.execute(text("DELETE FROM alerts WHERE case_id=:cid"), {"cid": case_id})
+
+    alert_data = []
     for txn in transactions:
         for flag in txn.flags:
-            await db.execute(
-                text("""INSERT INTO alerts (case_id, account_id, flag, confidence, evidence)
-                        VALUES (:cid, :aid, :flag, :conf, CAST(:ev AS jsonb))
-                        ON CONFLICT DO NOTHING"""),
-                {
-                    "cid": case_id,
-                    "aid": txn.account_id,
-                    "flag": str(flag),
-                    "conf": txn.risk_score or 0.5,
-                    "ev": json.dumps({"narration": txn.narration,
-                                     "amount": str(txn.amount),
-                                     "date": txn.txn_date.isoformat()})
-                }
-            )
+            alert_data.append({
+                "cid": case_id,
+                "aid": txn.account_id,
+                "flag": str(flag),
+                "conf": txn.risk_score or 0.5,
+                "ev": json.dumps({"narration": txn.narration,
+                                 "amount": str(txn.amount),
+                                 "date": txn.txn_date.isoformat()})
+            })
     # Add circular flow alerts from Neo4j
     for circle in circles:
         for account_id in circle.get("accounts", []):
-            await db.execute(
-                text("""INSERT INTO alerts (case_id, account_id, flag, confidence, evidence)
-                        VALUES (:cid, :aid, 'CIRCULAR_FLOW', 0.9, CAST(:ev AS jsonb))
-                        ON CONFLICT DO NOTHING"""),
-                {"cid": case_id, "aid": account_id,
-                 "ev": json.dumps({"accounts": circle["accounts"], "hops": circle["hops"]})}
-            )
+            alert_data.append({
+                "cid": case_id,
+                "aid": account_id,
+                "flag": 'CIRCULAR_FLOW',
+                "conf": 0.9,
+                "ev": json.dumps({"accounts": circle["accounts"], "hops": circle["hops"]})
+            })
+    
+    # Execute batch inserts
+    chunk_size = 10000
+    for i in range(0, len(alert_data), chunk_size):
+        chunk = alert_data[i:i+chunk_size]
+        await db.execute(
+            text("""INSERT INTO alerts (case_id, account_id, flag, confidence, evidence)
+                    VALUES (:cid, :aid, :flag, :conf, CAST(:ev AS jsonb))
+                    ON CONFLICT DO NOTHING"""),
+            chunk
+        )
     await db.commit()
 
 async def _save_money_trail(db, case_id: str, trail, transactions):
     from sqlalchemy import text
+    # Truncate old money trails
+    await db.execute(text("DELETE FROM money_trails WHERE case_id=:cid"), {"cid": case_id})
+
     txn_id_map = {t.txn_hash: t for t in transactions}
+    insert_data = []
     for entry in trail:
         credit_txn = txn_id_map.get(entry.credit_txn_id)
         debit_txn  = txn_id_map.get(entry.debit_txn_id)
         if not credit_txn or not debit_txn:
             continue
-        # Get DB UUIDs by txn_hash
-        cr = await db.execute(
-            text("SELECT id FROM transactions WHERE txn_hash=:h"), {"h": entry.credit_txn_id})
-        dr = await db.execute(
-            text("SELECT id FROM transactions WHERE txn_hash=:h"), {"h": entry.debit_txn_id})
-        cr_row = cr.fetchone()
-        dr_row = dr.fetchone()
-        if not cr_row or not dr_row:
+        
+        # Directly use loaded db UUIDs from the Transaction object properties
+        cr_id = credit_txn.id
+        dr_id = debit_txn.id
+        if not cr_id or not dr_id:
             continue
+            
+        insert_data.append({
+            "cid": case_id,
+            "crid": cr_id,
+            "drid": dr_id,
+            "amt": str(entry.amount),
+            "days": entry.days_held
+        })
+        
+    chunk_size = 10000
+    for i in range(0, len(insert_data), chunk_size):
+        chunk = insert_data[i:i+chunk_size]
         await db.execute(
             text("""INSERT INTO money_trails (case_id, credit_txn_id, debit_txn_id, amount, days_held)
                     VALUES (:cid, :crid, :drid, :amt, :days)"""),
-            {"cid": case_id, "crid": str(cr_row[0]), "drid": str(dr_row[0]),
-             "amt": str(entry.amount), "days": entry.days_held}
+            chunk
         )
     await db.commit()
 
@@ -496,7 +539,7 @@ async def _save_verdicts(db, case_id: str, rows: list[dict]):
 
 
 @celery_app.task(bind=True, name="parse_statement")
-def parse_statement_task(self, statement_id: str, file_path: str, case_id: str, bank_override: str, original_filename: str, user_id: str):
+def parse_statement_task(self, statement_id: str, file_path: str, case_id: str, bank_override: str, original_filename: str, user_id: str, column_mapping: Optional[dict] = None):
     """Celery task to parse a statement in the background and report progress."""
     try:
         import asyncio
@@ -511,38 +554,50 @@ def parse_statement_task(self, statement_id: str, file_path: str, case_id: str, 
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
-                    new_loop.run_until_complete(_run_parse_statement_pipeline(self, statement_id, file_path, case_id, bank_override, original_filename, user_id))
+                    new_loop.run_until_complete(_run_parse_statement_pipeline(self, statement_id, file_path, case_id, bank_override, original_filename, user_id, column_mapping))
                 finally:
                     new_loop.close()
             t = threading.Thread(target=run_in_thread)
             t.start()
             t.join()
         else:
-            async_to_sync(_run_parse_statement_pipeline)(self, statement_id, file_path, case_id, bank_override, original_filename, user_id)
+            async_to_sync(_run_parse_statement_pipeline)(self, statement_id, file_path, case_id, bank_override, original_filename, user_id, column_mapping)
         return str(statement_id)
     except Exception as e:
         logger.error("Parse statement task failed for statement %s: %s", statement_id, e, exc_info=True)
         raise
 
 
-async def _run_parse_statement_pipeline(task_self, statement_id: str, file_path: str, case_id: str, bank_override: str, original_filename: str, user_id: str):
+async def _run_parse_statement_pipeline(task_self, statement_id: str, file_path: str, case_id: str, bank_override: str, original_filename: str, user_id: str, column_mapping: Optional[dict] = None):
     import os
-    import json
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
-    from sqlalchemy import text
-    from parsers.router import route_file
-    import logging
 
-    logger = logging.getLogger(__name__)
-
-    # Configure session
     _db_url = os.getenv("DATABASE_URL", "")
+    engine = None
     if _db_url:
         engine = create_async_engine(_db_url, echo=False)
         Session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     else:
         from database import AsyncSessionLocal as Session
+
+    try:
+        await _run_parse_statement_pipeline_core(task_self, statement_id, file_path, case_id, bank_override, original_filename, user_id, Session, column_mapping)
+    finally:
+        if engine:
+            await engine.dispose()
+
+
+async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_path: str, case_id: str, bank_override: str, original_filename: str, user_id: str, Session, column_mapping: Optional[dict] = None):
+    import os
+    import json
+    import hashlib
+    from datetime import datetime
+    from sqlalchemy import text
+    from parsers.router import route_file
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     async with Session() as db:
         # Set initial status
@@ -560,8 +615,21 @@ async def _run_parse_statement_pipeline(task_self, statement_id: str, file_path:
             await db.commit()
 
         try:
+            # Check if column_mapping is in DB if not provided
+            if not column_mapping:
+                result = await db.execute(
+                    text("SELECT column_mapping FROM statements WHERE id = :sid"),
+                    {"sid": statement_id}
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    if isinstance(row[0], dict):
+                        column_mapping = row[0]
+                    else:
+                        column_mapping = json.loads(row[0])
+
             txns, meta = await route_file(
-                file_path, case_id, statement_id, bank_override, original_filename, progress_callback=progress_cb
+                file_path, case_id, statement_id, bank_override, original_filename, progress_callback=progress_cb, column_mapping=column_mapping
             )
 
             # Update statement record
@@ -573,25 +641,52 @@ async def _run_parse_statement_pipeline(task_self, statement_id: str, file_path:
                 {"bank": meta.get("bank_name", ""), "rc": len(txns), "sid": statement_id}
             )
 
-            # Save transactions
+            # Retrieve the statement file hash for chaining
+            file_hash = meta.get("file_hash", "GENESIS")
+
+            # Sort transactions to generate a deterministic hash chain
+            txns = sorted(txns, key=lambda t: (t.txn_date or datetime.min, t.txn_hash))
+
+            # Chaining sequence: SHA-256(current_txn_hash + prev_chain_hash)
+            prev_hash = file_hash
+            txn_rows = []
             for txn in txns:
+                content = f"{txn.txn_hash}|{prev_hash}"
+                chain_hash = hashlib.sha256(content.encode()).hexdigest()
+                prev_hash = chain_hash
+
+                txn_rows.append({
+                    "h": txn.txn_hash,
+                    "cid": case_id,
+                    "sid": statement_id,
+                    "aid": txn.account_id,
+                    "ah": txn.account_holder,
+                    "bn": txn.bank_name,
+                    "td": txn.txn_date,
+                    "amt": str(txn.amount),
+                    "tt": txn.txn_type,
+                    "bal": str(txn.balance_after) if txn.balance_after else None,
+                    "nar": txn.narration,
+                    "cp": txn.counterparty_account,
+                    "cpn": txn.counterparty_name,
+                    "ch": chain_hash
+                })
+
+            chunk_size = 5000
+            for i in range(0, len(txn_rows), chunk_size):
+                chunk = txn_rows[i:i+chunk_size]
                 try:
                     await db.execute(
                         text("""INSERT INTO transactions
                              (txn_hash, case_id, statement_id, account_id, account_holder, bank_name,
                               txn_date, amount, txn_type, balance_after, narration,
-                              counterparty_account, counterparty_name)
-                              VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn)
+                              counterparty_account, counterparty_name, chain_hash)
+                              VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn,:ch)
                               ON CONFLICT (txn_hash) DO NOTHING"""),
-                         {"h": txn.txn_hash, "cid": case_id, "sid": statement_id,
-                          "aid": txn.account_id, "ah": txn.account_holder, "bn": txn.bank_name,
-                          "td": txn.txn_date, "amt": str(txn.amount), "tt": txn.txn_type,
-                          "bal": str(txn.balance_after) if txn.balance_after else None,
-                          "nar": txn.narration, "cp": txn.counterparty_account,
-                          "cpn": txn.counterparty_name}
+                        chunk
                     )
                 except Exception as ex:
-                    logger.debug("Transaction insert skip in task: %s", ex)
+                    logger.debug("Transaction batch insert skip in task: %s", ex)
 
             await db.commit()
 
@@ -606,7 +701,6 @@ async def _run_parse_statement_pipeline(task_self, statement_id: str, file_path:
             )
             await db.commit()
 
-    if _db_url:
-        await engine.dispose()
+
 
 

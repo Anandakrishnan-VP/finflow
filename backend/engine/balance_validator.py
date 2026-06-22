@@ -39,17 +39,38 @@ def detect_failed_transactions(txns: list[UniversalTransaction]) -> list[Univers
     A failed transaction: debit followed by credit of same amount within 24h, same narration hint.
     Marks both as FAILED_TXN.
     """
-    debits = [(i, t) for i, t in enumerate(txns) if t.txn_type == "DR"]
-    credited = set()
-    for i, debit in debits:
-        for j, txn in enumerate(txns):
-            if j in credited: continue
-            if txn.txn_type != "CR": continue
-            if txn.amount != debit.amount: continue
-            delta = abs((txn.txn_date - debit.txn_date).total_seconds())
-            if delta <= 86400:  # 24 hours
-                debit.flags.append(TransactionFlag.FAILED_TXN)
-                txn.flags.append(TransactionFlag.FAILED_TXN)
-                credited.add(j)
-                break
+    from collections import deque
+
+    # Group by account and amount to narrow down matching candidates
+    groups = {}
+    for i, t in enumerate(txns):
+        key = (t.account_id, t.amount)
+        groups.setdefault(key, []).append((i, t))
+
+    for (account_id, amount), group_txns in groups.items():
+        # Sort chronologically by date
+        group_txns.sort(key=lambda x: x[1].txn_date)
+        
+        debits_queue = deque()
+        
+        for idx, txn in group_txns:
+            if txn.txn_type == "DR":
+                debits_queue.append((idx, txn))
+            elif txn.txn_type == "CR":
+                while debits_queue:
+                    deb_idx, deb_txn = debits_queue[0]
+                    delta = (txn.txn_date - deb_txn.txn_date).total_seconds()
+                    
+                    if 0 <= delta <= 86400:  # Within 24 hours
+                        deb_txn.flags.append(TransactionFlag.FAILED_TXN)
+                        txn.flags.append(TransactionFlag.FAILED_TXN)
+                        debits_queue.popleft()  # Match found, consume debit
+                        break
+                    elif delta < 0:
+                        # Sorted, so subsequent debits will also be in the future
+                        break
+                    else:
+                        # Oldest debit is older than 24 hours. Cannot match this or any future credits.
+                        debits_queue.popleft()
+                        
     return txns

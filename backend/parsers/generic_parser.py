@@ -14,12 +14,36 @@ from schemas.uts import UniversalTransaction, TransactionType
 logger = logging.getLogger(__name__)
 
 # Compile regexes once
-DATE_RE = re.compile(r'(\d{1,2})[/\-\.\s](?:\d{1,2}|[A-Za-z]{3,9})[/\-\.\s](\d{2,4})')
+CLEAN_NUMERIC_RE = re.compile(r'^-?\d+(?:\.\d+)?$')
+_HAS_DIGIT = re.compile(r'\d')
 
+# Fast date extraction: regex match + direct datetime() — avoids strptime exception overhead
+_FAST_DATE_PATTERNS = [
+    (re.compile(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{4})$'), 'DMY4'),
+    (re.compile(r'^(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})$'), 'YMD'),
+    (re.compile(r'^(\d{1,2})[/\-\.](\d{1,2})[/\-\.](\d{2})$'), 'DMY2'),
+    (re.compile(r'^(\d{1,2})[\s\-\.]([A-Za-z]{3,9})[\s\-\.](\d{4})$'), 'DMonY4'),
+    (re.compile(r'^(\d{1,2})[\s\-\.]([A-Za-z]{3,9})[\s\-\.](\d{2})$'), 'DMonY2'),
+    (re.compile(r'^([A-Za-z]{3,9})[\s\-\.](\d{1,2})[\s\-\.](\d{4})$'), 'MonDY4'),
+    (re.compile(r'^(\d{1,2})[\s\-\.]([A-Za-z]{3,9})$'), 'DMon'),
+    (re.compile(r'^([A-Za-z]{3,9})[\s\-\.](\d{1,2})$'), 'MonD'),
+]
+_MONTH_LOOKUP = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+    'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'june': 6,
+    'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+}
+_DATE_SUBSTR_RE = re.compile(r'(\d{1,2}[/\-\.\s](?:\d{1,2}|[A-Za-z]{3,9})[/\-\.\s]\d{2,4})')
+_last_fast_idx = 0  # Per-process LRU cache for Celery prefork workers
+
+# strptime fallback for truly unusual formats (rarely hit after fast path)
 DATE_FORMATS = [
     "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y",
     "%d %b %Y", "%d-%b-%Y", "%d %B %Y", "%d-%B-%Y",
-    "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y"
+    "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y",
+    "%d %b", "%d-%b", "%d.%b", "%d %B", "%d-%B", "%d.%B",
+    "%b %d", "%b-%d", "%B %d", "%B-%d"
 ]
 
 HEADER_PATTERNS = {
@@ -90,6 +114,14 @@ def parse_decimal(s: str) -> Optional[Decimal]:
     if not s or not s.strip():
         return None
     raw = s.strip()
+    
+    # Fast path: check if it's already a clean numeric string (no currency symbols, no commas)
+    if CLEAN_NUMERIC_RE.match(raw):
+        try:
+            return Decimal(raw)
+        except (InvalidOperation, ValueError):
+            pass
+
     is_negative = False
     if raw.startswith("(") and raw.endswith(")"):
         is_negative = True
@@ -107,79 +139,177 @@ def parse_decimal(s: str) -> Optional[Decimal]:
         return None
 
 def parse_date(s: str) -> Optional[datetime]:
+    """Fast regex-based date parser. 10-20x faster than strptime for large files."""
+    global _last_fast_idx
     s = s.strip()
-    for fmt in DATE_FORMATS:
+    if not s or not _HAS_DIGIT.search(s):
+        return None
+
+    # --- Fast path: regex match + direct datetime construction ---
+    n = len(_FAST_DATE_PATTERNS)
+    for offset in range(n):
+        idx = (_last_fast_idx + offset) % n
+        regex, fmt_type = _FAST_DATE_PATTERNS[idx]
+        m = regex.match(s)
+        if not m:
+            continue
         try:
-            return datetime.strptime(s, fmt)
+            d = mo = y = None
+            if fmt_type == 'DMY4':
+                d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            elif fmt_type == 'YMD':
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            elif fmt_type == 'DMY2':
+                d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                y += 2000 if y < 70 else 1900
+            elif fmt_type in ('DMonY4', 'DMonY2'):
+                d = int(m.group(1))
+                mo = _MONTH_LOOKUP.get(m.group(2).lower())
+                if mo is None:
+                    continue
+                y = int(m.group(3))
+                if fmt_type == 'DMonY2':
+                    y += 2000 if y < 70 else 1900
+            elif fmt_type == 'MonDY4':
+                mo = _MONTH_LOOKUP.get(m.group(1).lower())
+                if mo is None:
+                    continue
+                d, y = int(m.group(2)), int(m.group(3))
+            elif fmt_type == 'DMon':
+                d = int(m.group(1))
+                mo = _MONTH_LOOKUP.get(m.group(2).lower())
+                if mo is None:
+                    continue
+                y = datetime.now().year
+            elif fmt_type == 'MonD':
+                mo = _MONTH_LOOKUP.get(m.group(1).lower())
+                if mo is None:
+                    continue
+                d = int(m.group(2))
+                y = datetime.now().year
+            else:
+                continue
+
+            if 1 <= mo <= 12 and 1 <= d <= 31:
+                result = datetime(y, mo, d)
+                _last_fast_idx = idx
+                return result
+            # Ambiguous numeric: try swap day/month
+            if fmt_type in ('DMY4', 'DMY2') and 1 <= d <= 12 and 1 <= mo <= 31:
+                result = datetime(y, d, mo)
+                _last_fast_idx = idx
+                return result
+        except (ValueError, OverflowError):
+            continue
+
+    # --- Fallback: extract date substring and retry ---
+    m = _DATE_SUBSTR_RE.search(s)
+    if m:
+        extracted = m.group(1).strip()
+        if extracted != s:
+            return parse_date(extracted)
+
+    # --- Last resort: strptime for unusual formats ---
+    for fmt_idx, fmt in enumerate(DATE_FORMATS):
+        try:
+            val = datetime.strptime(s, fmt)
+            if fmt_idx > 0:
+                DATE_FORMATS.insert(0, DATE_FORMATS.pop(fmt_idx))
+            return val
         except ValueError:
             pass
-    # Regex extract date-like parts
-    m = re.search(r'(\d{1,2}[/\-\.\s](?:\d{1,2}|[A-Za-z]{3,9})[/\-\.\s]\d{2,4})', s)
-    if m:
-        date_part = m.group(1)
-        for fmt in DATE_FORMATS:
-            try:
-                return datetime.strptime(date_part, fmt)
-            except ValueError:
-                pass
     return None
 
 def parse_generic_table(
     rows: list[list[str]],
     bank_name: str,
-    file_hash: str
-) -> list[UniversalTransaction]:
+    file_hash: str,
+    column_mapping: Optional[dict] = None,
+    return_mapping: bool = False,
+    statement_id: str = "",
+    pre_cleaned: bool = False
+) -> tuple[list[UniversalTransaction], dict] | list[UniversalTransaction]:
+    # Use statement_id (unique UUID per upload) as the primary seed for txn_hash
+    # so the same file uploaded to different cases gets different hashes.
+    _hash_seed = statement_id if statement_id else file_hash
     """
-    Parses a list of rows (cells) into UniversalTransactions using dynamic heuristics.
+    Parses a list of rows (cells) into UniversalTransactions using dynamic heuristics or manual overrides.
     Supports multi-line narration merging and mathematical debit/credit correction.
     """
     if not rows:
         return []
 
-    cleaned_rows = []
-    for r in rows:
-        cleaned_rows.append([str(c or "").strip() for c in r])
-
-    # 1. Identify header row with regex fuzzy mapping
-    header_idx = -1
-    best_score = 0
-    header_mapping = {}
-
-    for idx, r in enumerate(cleaned_rows[:50]):
-        score = 0
-        mapping = {}
-        for c_idx, cell in enumerate(r):
-            cell_lower = cell.lower().strip()
-            if not cell_lower:
-                continue
-            for key, patterns in HEADER_PATTERNS.items():
-                for pattern in patterns:
-                    if re.search(pattern, cell_lower):
-                        if key not in mapping:
-                            mapping[key] = c_idx
-                            score += 1
-                            break
-        if score > best_score and score >= 2:
-            best_score = score
-            header_idx = idx
-            header_mapping = mapping
-
-    logger.info(f"Generic parser: detected header at row {header_idx} with score {best_score}. Mapping: {header_mapping}")
-
-    # If no header was detected, we infer columns from cell value profiles
-    if header_idx == -1:
-        header_mapping = infer_column_roles(cleaned_rows)
-        logger.info(f"Generic parser: no header row found. Inferred mapping: {header_mapping}")
-        start_row_idx = 0
+    if pre_cleaned:
+        cleaned_rows = rows
     else:
-        start_row_idx = header_idx + 1
+        cleaned_rows = []
+        for r in rows:
+            cleaned_rows.append([str(c or "").strip() for c in r])
 
-    date_idx = header_mapping.get("date")
-    narration_idx = header_mapping.get("narration")
-    debit_idx = header_mapping.get("debit")
-    credit_idx = header_mapping.get("credit")
-    amount_idx = header_mapping.get("amount")
-    balance_idx = header_mapping.get("balance")
+    if column_mapping:
+        logger.info(f"Generic parser: using manual column mapping: {column_mapping}")
+        def get_index(k):
+            val = column_mapping.get(k)
+            if val is None or val == "" or val == "None":
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
+
+        date_idx = get_index("date")
+        narration_idx = get_index("narration")
+        debit_idx = get_index("debit")
+        credit_idx = get_index("credit")
+        amount_idx = get_index("amount")
+        balance_idx = get_index("balance")
+        start_row_idx = 0
+        # If the first row matches headers or is exactly identical to mapping labels, skip it
+        if len(cleaned_rows) > 0:
+            first_row_lower = [c.lower() for c in cleaned_rows[0]]
+            if any(k in first_row_lower for k in ["date", "narration", "debit", "credit", "amount", "balance"]):
+                start_row_idx = 1
+    else:
+        # 1. Identify header row with regex fuzzy mapping
+        header_idx = -1
+        best_score = 0
+        header_mapping = {}
+
+        for idx, r in enumerate(cleaned_rows[:50]):
+            score = 0
+            mapping = {}
+            for c_idx, cell in enumerate(r):
+                cell_lower = cell.lower().strip()
+                if not cell_lower:
+                    continue
+                for key, patterns in HEADER_PATTERNS.items():
+                    for pattern in patterns:
+                        if re.search(pattern, cell_lower):
+                            if key not in mapping:
+                                mapping[key] = c_idx
+                                score += 1
+                                break
+            if score > best_score and score >= 2:
+                best_score = score
+                header_idx = idx
+                header_mapping = mapping
+
+        logger.info(f"Generic parser: detected header at row {header_idx} with score {best_score}. Mapping: {header_mapping}")
+
+        # If no header was detected, we infer columns from cell value profiles
+        if header_idx == -1:
+            header_mapping = infer_column_roles(cleaned_rows)
+            logger.info(f"Generic parser: no header row found. Inferred mapping: {header_mapping}")
+            start_row_idx = 0
+        else:
+            start_row_idx = header_idx + 1
+
+        date_idx = header_mapping.get("date")
+        narration_idx = header_mapping.get("narration")
+        debit_idx = header_mapping.get("debit")
+        credit_idx = header_mapping.get("credit")
+        amount_idx = header_mapping.get("amount")
+        balance_idx = header_mapping.get("balance")
 
     if date_idx is None or (debit_idx is None and credit_idx is None and amount_idx is None):
         logger.warning("Generic parser: missing critical columns (date or amount/debit/credit). Cannot parse.")
@@ -196,9 +326,9 @@ def parse_generic_table(
 
     txns = []
     last_txn = None
+    max_idx = max(filter(lambda x: x is not None, [date_idx, narration_idx, debit_idx, credit_idx, amount_idx, balance_idx]))
 
     for idx, r in enumerate(cleaned_rows[start_row_idx:]):
-        max_idx = max(filter(lambda x: x is not None, [date_idx, narration_idx, debit_idx, credit_idx, amount_idx, balance_idx]))
         if len(r) <= max_idx:
             continue
 
@@ -213,7 +343,7 @@ def parse_generic_table(
                 # Make sure other columns aren't containing conflicting data
                 last_txn.narration = (last_txn.narration + " " + narration_str).strip()
                 last_txn.txn_hash = hashlib.sha256(
-                    f"{last_txn.bank_name}|{last_txn.txn_date.isoformat()}|{last_txn.amount}|{last_txn.narration}".encode()
+                    f"{_hash_seed}|{last_txn.bank_name}|{last_txn.txn_date.isoformat()}|{last_txn.amount}|{last_txn.narration}".encode()
                 ).hexdigest()
             continue
 
@@ -266,7 +396,7 @@ def parse_generic_table(
             balance = parse_decimal(r[balance_idx])
 
         txn_hash = hashlib.sha256(
-            f"{bank_name}|{date.isoformat()}|{amount}|{narration}".encode()
+            f"{_hash_seed}|{bank_name}|{date.isoformat()}|{amount}|{narration}".encode()
         ).hexdigest()
 
         txn = UniversalTransaction(
@@ -298,6 +428,30 @@ def parse_generic_table(
                 elif diff < 0:
                     curr.txn_type = TransactionType.DEBIT
 
+    # Year alignment: if some transactions parsed with current year/2026/1900 due to lack of year in OCR
+    # but the rest of the statement is in a different year, align them.
+    years = [t.txn_date.year for t in txns if t.txn_date and t.txn_date.year not in (datetime.now().year, 2026, 1900)]
+    if years:
+        from collections import Counter
+        most_common_year = Counter(years).most_common(1)[0][0]
+        for t in txns:
+            if t.txn_date and t.txn_date.year in (datetime.now().year, 2026, 1900):
+                try:
+                    t.txn_date = t.txn_date.replace(year=most_common_year)
+                except ValueError:
+                    pass
+
+    if return_mapping:
+        actual_mapping = {
+            "date": date_idx,
+            "narration": narration_idx,
+            "debit": debit_idx,
+            "credit": credit_idx,
+            "amount": amount_idx,
+            "balance": balance_idx
+        }
+        return txns, actual_mapping
+
     return txns
 
 def infer_column_roles(rows: list[list[str]]) -> dict:
@@ -308,15 +462,23 @@ def infer_column_roles(rows: list[list[str]]) -> dict:
     if not rows:
         return {}
 
-    num_cols = len(rows[0])
+    from collections import Counter
+    lengths = [len(r) for r in rows if len(r) >= 2]
+    if not lengths:
+        return {}
+    most_common_len = Counter(lengths).most_common(1)[0][0]
+
+    filtered_rows = [r for r in rows if len(r) == most_common_len]
+    if not filtered_rows:
+        return {}
+
+    num_cols = most_common_len
     date_scores = [0] * num_cols
     numeric_scores = [0] * num_cols
     total_len = [0] * num_cols
     valid_rows = 0
 
-    for r in rows[:100]:
-        if len(r) != num_cols:
-            continue
+    for r in filtered_rows[:100]:
         valid_rows += 1
         for idx, cell in enumerate(r):
             if parse_date(cell):
