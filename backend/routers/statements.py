@@ -259,35 +259,13 @@ async def get_file_preview(file_path: str) -> list[list[str]]:
                                     success = preprocess_image(tmp_raw.name, tmp_proc.name)
                                     img_to_ocr = tmp_proc.name if success else tmp_raw.name
                                     
-                                # Try img2table on the preprocessed page image
-                                from img2table.document import Image as Img2TableImage
-                                from img2table.ocr import TesseractOCR as Img2TableTesseract
-                                import pandas as pd
-                                
-                                table = []
+                                # Try Surya-OCR on the preprocessed page image
+                                from parsers.surya_parser import extract_table_from_image
                                 try:
-                                    ocr = Img2TableTesseract(n_threads=1, lang="eng")
-                                    img_doc = Img2TableImage(src=img_to_ocr)
-                                    extracted_tables = img_doc.extract_tables(ocr=ocr, implicit_rows=True, borderless_tables=True)
-                                    if extracted_tables:
-                                        t = extracted_tables[0]
-                                        df = t.df
-                                        if df is not None and not df.empty:
-                                            table_grid = []
-                                            headers = [clean_ocr_cell(c) for c in df.columns]
-                                            if not all(str(h).isdigit() for h in headers):
-                                                table_grid.append(headers)
-                                            for _, row in df.iterrows():
-                                                table_grid.append([clean_ocr_cell(val) for val in row])
-                                            table_grid = [r for r in table_grid if any(c.strip() for c in r)]
-                                            if table_grid:
-                                                table = table_grid
-                                except Exception as img2table_err:
-                                    logger.warning("img2table preview failed: %s", img2table_err)
-
-                                if not table:
-                                    tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
-                                    table = reconstruct_table_from_tsv(tsv_text)
+                                    table = await extract_table_from_image(img_to_ocr)
+                                except Exception as surya_err:
+                                    logger.warning("Surya OCR preview failed: %s", surya_err)
+                                    table = []
                                 
                                 os.unlink(tmp_raw.name)
                                 os.unlink(tmp_proc.name)
@@ -318,20 +296,29 @@ async def preview_statement_file(
 ):
     """Retrieve raw rows (up to 20) of a statement file for visual mapping."""
     result = await db.execute(
-        text("SELECT stored_path FROM statements WHERE id = :sid AND case_id = :cid"),
+        text("SELECT stored_path, preview_rows FROM statements WHERE id = :sid AND case_id = :cid"),
         {"sid": statement_id, "cid": case_id}
     )
     row = result.fetchone()
     if not row:
         raise HTTPException(404, "Statement not found")
     
-    stored_path = row[0]
+    stored_path, preview_rows = row
+    if preview_rows is not None:
+        return {"rows": preview_rows}
+    
     if not os.path.exists(stored_path):
         raise HTTPException(404, "Statement file not found on disk")
         
     try:
-        preview_rows = await get_file_preview(stored_path)
-        return {"rows": preview_rows}
+        rows = await get_file_preview(stored_path)
+        import json
+        await db.execute(
+            text("UPDATE statements SET preview_rows = CAST(:prows AS jsonb) WHERE id = :sid"),
+            {"prows": json.dumps(rows), "sid": statement_id}
+        )
+        await db.commit()
+        return {"rows": rows}
     except Exception as e:
         raise HTTPException(500, f"Failed to generate preview: {e}")
 

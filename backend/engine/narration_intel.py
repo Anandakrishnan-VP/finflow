@@ -142,14 +142,17 @@ def compute_narration_clusters(txns: list[UniversalTransaction]) -> list[dict]:
 
         # If large dataset: propagate cluster flags back to all valid_txns
         if is_large:
+            cluster_hashes = {lbl: set(t.txn_hash for t in c_txns) for lbl, c_txns in clusters_dict.items()}
             for t in valid_txns:
                 key = t.narration.lower().strip() if t.narration else ""
                 if key in narration_to_label:
                     lbl = narration_to_label[key]
                     if lbl not in clusters_dict:
                         clusters_dict[lbl] = []
-                    if t not in clusters_dict[lbl]:
+                        cluster_hashes[lbl] = set()
+                    if t.txn_hash not in cluster_hashes[lbl]:
                         clusters_dict[lbl].append(t)
+                        cluster_hashes[lbl].add(t.txn_hash)
 
         db_clusters = []
         for label, c_txns in clusters_dict.items():

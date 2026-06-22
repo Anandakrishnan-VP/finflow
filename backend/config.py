@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     llm_model: str = "llama-3.1-8b-instant"
     groq_api_key: str = ""
     tsa_url: str = "https://freetsa.org/tsr"
+    surya_device: str = "auto"
 
     class Config:
         env_file = str(_ENV_FILE)

@@ -10,7 +10,7 @@ async def main():
         print("Cleaning transactions, tasks, review queue, and statements...")
         await conn.execute(text("DELETE FROM analysis_tasks WHERE case_id = 'a0000000-0000-0000-0000-000000000000'"))
         await conn.execute(text("DELETE FROM human_review_queue WHERE case_id = 'a0000000-0000-0000-0000-000000000000'"))
-        await conn.execute(text("DELETE FROM transactions WHERE case_id = 'a0000000-0000-0000-0000-000000000000'"))
+        await conn.execute(text("DELETE FRO Let me be clear M transactions WHERE case_id = 'a0000000-0000-0000-0000-000000000000'"))
         await conn.execute(text("DELETE FROM statements WHERE case_id = 'a0000000-0000-0000-0000-000000000000'"))
         print("Deleting dummy case...")
         await conn.execute(text("DELETE FROM cases WHERE id = 'a0000000-0000-0000-0000-000000000000'"))

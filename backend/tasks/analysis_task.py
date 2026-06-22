@@ -19,16 +19,22 @@ def analyze_case_task(self, case_id: str):
 
         if loop and loop.is_running():
             import threading
+            thread_exc = None
             def run_in_thread():
+                nonlocal thread_exc
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
                     new_loop.run_until_complete(_run_analysis_pipeline(self, case_id, task_id))
+                except Exception as e:
+                    thread_exc = e
                 finally:
                     new_loop.close()
             t = threading.Thread(target=run_in_thread)
             t.start()
             t.join()
+            if thread_exc:
+                raise thread_exc
         else:
             async_to_sync(_run_analysis_pipeline)(self, case_id, task_id)
         return str(case_id)
@@ -550,16 +556,22 @@ def parse_statement_task(self, statement_id: str, file_path: str, case_id: str, 
 
         if loop and loop.is_running():
             import threading
+            thread_exc = None
             def run_in_thread():
+                nonlocal thread_exc
                 new_loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(new_loop)
                 try:
                     new_loop.run_until_complete(_run_parse_statement_pipeline(self, statement_id, file_path, case_id, bank_override, original_filename, user_id, column_mapping))
+                except Exception as e:
+                    thread_exc = e
                 finally:
                     new_loop.close()
             t = threading.Thread(target=run_in_thread)
             t.start()
             t.join()
+            if thread_exc:
+                raise thread_exc
         else:
             async_to_sync(_run_parse_statement_pipeline)(self, statement_id, file_path, case_id, bank_override, original_filename, user_id, column_mapping)
         return str(statement_id)
@@ -615,6 +627,18 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
             await db.commit()
 
         try:
+            # Generate and cache preview rows in DB
+            from routers.statements import get_file_preview
+            try:
+                preview_rows = await get_file_preview(file_path)
+                await db.execute(
+                    text("UPDATE statements SET preview_rows = CAST(:prows AS jsonb) WHERE id = :sid"),
+                    {"prows": json.dumps(preview_rows), "sid": statement_id}
+                )
+                await db.commit()
+            except Exception as preview_err:
+                logger.warning("Background preview generation failed: %s", preview_err)
+
             # Check if column_mapping is in DB if not provided
             if not column_mapping:
                 result = await db.execute(
@@ -682,7 +706,7 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
                               txn_date, amount, txn_type, balance_after, narration,
                               counterparty_account, counterparty_name, chain_hash)
                               VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn,:ch)
-                              ON CONFLICT (txn_hash) DO NOTHING"""),
+                              ON CONFLICT (statement_id, txn_hash) DO NOTHING"""),
                         chunk
                     )
                 except Exception as ex:

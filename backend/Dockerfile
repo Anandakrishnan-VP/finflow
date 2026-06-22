@@ -23,5 +23,8 @@ RUN mkdir -p /data/uploads /data/reports
 RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports
 USER finflow
 
+# Pre-download Surya model weights to the container's HuggingFace cache for offline portability
+RUN python -c "from surya.detection import DetectionPredictor; from surya.layout import LayoutPredictor; from surya.recognition import RecognitionPredictor; from surya.foundation import FoundationPredictor; from surya.settings import settings; DetectionPredictor(); RecognitionPredictor(FoundationPredictor(checkpoint=settings.RECOGNITION_MODEL_CHECKPOINT)); LayoutPredictor(FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT))"
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

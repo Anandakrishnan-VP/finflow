@@ -71,6 +71,7 @@ export default function UploadPanel({ caseId, onUploaded }) {
   };
 
   const openColumnMapper = async (stmt) => {
+    if (previewLoading) return;
     try {
       setMapperStatement(stmt);
       setPreviewRows([]);
@@ -218,7 +219,12 @@ export default function UploadPanel({ caseId, onUploaded }) {
                         PARSED
                       </span>
                       <button onClick={() => openColumnMapper(s)}
-                              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 rounded px-2 py-0.5 font-medium transition-colors">
+                              disabled={previewLoading}
+                              className={`text-xs border rounded px-2 py-0.5 font-medium transition-colors ${
+                                previewLoading 
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                              }`}>
                         ✏️ Adjust Map
                       </button>
                     </div>
@@ -229,7 +235,12 @@ export default function UploadPanel({ caseId, onUploaded }) {
                       </span>
                       {s.id && (
                         <button onClick={() => openColumnMapper(s)}
-                                className="text-xs bg-slate-800 hover:bg-slate-900 text-white rounded px-2 py-0.5 font-medium shadow-sm transition-colors">
+                                disabled={previewLoading}
+                                className={`text-xs rounded px-2 py-0.5 font-medium shadow-sm transition-colors ${
+                                  previewLoading 
+                                    ? 'bg-slate-300 text-slate-500 cursor-not-allowed' 
+                                    : 'bg-slate-800 hover:bg-slate-900 text-white'
+                                }`}>
                           ✏️ Map Columns
                         </button>
                       )}

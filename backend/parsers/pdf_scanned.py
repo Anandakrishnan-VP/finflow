@@ -136,234 +136,105 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
 
 async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = None, column_mapping: dict = None) -> list[UniversalTransaction]:
     """
-    Convert each PDF page to image, run advanced preprocessing, run Tesseract, and parse TSV output.
+    Convert each PDF page to image, run advanced preprocessing, run Surya-OCR layout-guided extraction.
     If column_mapping is provided (from manual UI mapping), it is passed to the generic table parser.
     """
     import fitz  # PyMuPDF
-    from img2table.document import PDF as Img2TablePDF
-    from img2table.ocr import TesseractOCR as Img2TableTesseract
+    import tempfile
+    from pathlib import Path
     from parsers.generic_parser import parse_generic_table
-    import pandas as pd
+    from parsers.surya_parser import extract_table_from_image
 
     file_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
     txns = []
 
-    logger.info("Attempting local OpenCV visual table parsing with img2table on %s", file_path)
-    
-    try:
-        # Initialize local Tesseract engine inside img2table
-        ocr = Img2TableTesseract(n_threads=1, lang="eng")
-        doc = Img2TablePDF(src=file_path)
-        
-        # Extract tables from the entire document
-        # implicit_rows=True finds cells without explicit horizontal borders
-        # borderless_tables=True finds tables without enclosing boxes
-        extracted_tables = doc.extract_tables(ocr=ocr, implicit_rows=True, borderless_tables=True)
-    except Exception as e:
-        logger.error("img2table extraction failed or crashed: %s. Falling back to raw OCR.", e)
-        extracted_tables = {}
-
-    total_tables_extracted = sum(len(tables) for tables in extracted_tables.values()) if extracted_tables else 0
-    
-    if total_tables_extracted > 0:
-        logger.info("OpenCV visual table parsing extracted %d tables across pages.", total_tables_extracted)
-        try:
-            pdf_doc = fitz.open(file_path)
-            total_pages = len(pdf_doc)
-            pdf_doc.close()
-        except Exception:
-            total_pages = max(extracted_tables.keys()) + 1 if extracted_tables else 1
-
-        last_valid_mapping = None
-        from parsers.generic_parser import HEADER_PATTERNS
-
-        for page_idx in sorted(extracted_tables.keys()):
-            if progress_callback:
-                pct = int(85 + (15 * (page_idx + 1) / total_pages))
-                await progress_callback(pct, f"Parsing table on page {page_idx + 1} of {total_pages}...")
-            
-            tables_on_page = extracted_tables[page_idx]
-            for t in tables_on_page:
-                df = t.df
-                if df is None or df.empty:
-                    continue
-                
-                # Convert DataFrame to list of lists of strings
-                table_grid = []
-                headers = [clean_ocr_cell(c) for c in df.columns]
-                if not all(str(h).isdigit() for h in headers):
-                    table_grid.append(headers)
-                
-                for _, row in df.iterrows():
-                    table_grid.append([clean_ocr_cell(val) for val in row])
-                
-                table_grid = [r for r in table_grid if any(c.strip() for c in r)]
-                
-                if not table_grid:
-                    continue
-
-                current_mapping = column_mapping
-                if not current_mapping and last_valid_mapping:
-                    # Check if the page has a complete header row
-                    has_complete_header = False
-                    for r in table_grid[:5]:
-                        score = 0
-                        matched_keys = set()
-                        for cell in r:
-                            cell_lower = cell.lower().strip()
-                            if not cell_lower:
-                                continue
-                            for key, patterns in HEADER_PATTERNS.items():
-                                for pattern in patterns:
-                                    if re.search(pattern, cell_lower):
-                                        if key not in matched_keys:
-                                            matched_keys.add(key)
-                                            score += 1
-                                            break
-                        if score >= 2 and "date" in matched_keys:
-                            has_complete_header = True
-                            break
-
-                    if not has_complete_header:
-                        valid_vals = [val for val in last_valid_mapping.values() if val is not None]
-                        if valid_vals:
-                            max_idx = max(valid_vals)
-                            if max_idx < len(table_grid[0]):
-                                logger.info(
-                                    "Page %d table has no complete header. Inheriting column layout from previous page.",
-                                    page_idx + 1
-                                )
-                                current_mapping = last_valid_mapping
-
-                page_txns, actual_mapping = parse_generic_table(
-                    table_grid, bank_name, file_hash, column_mapping=current_mapping, return_mapping=True
-                )
-                
-                if page_txns and actual_mapping.get("date") is not None:
-                    last_valid_mapping = actual_mapping
-
-                for txn in page_txns:
-                    txn.ocr_confidence = 0.82
-                txns.extend(page_txns)
-                
-        if txns:
-            # Global year alignment: align any 1900 or 2026/current year transactions to the most common year in the statement
-            years = [t.txn_date.year for t in txns if t.txn_date and t.txn_date.year not in (datetime.now().year, 2026, 1900)]
-            if years:
-                from collections import Counter
-                most_common_year = Counter(years).most_common(1)[0][0]
-                logger.info("Global year alignment: replacing default 1900/current years with most common year %d", most_common_year)
-                for t in txns:
-                    if t.txn_date and t.txn_date.year in (datetime.now().year, 2026, 1900):
-                        try:
-                            t.txn_date = t.txn_date.replace(year=most_common_year)
-                        except ValueError:
-                            pass
-
-            logger.info("Successfully extracted %d transactions using local OpenCV img2table.", len(txns))
-            return txns
-
-    # Fallback to Tesseract TSV word position clustering
-    logger.warning("img2table yielded no transactions. Falling back to raw Tesseract TSV text clustering.")
-    
     try:
         pdf_doc = fitz.open(file_path)
         total_pages = len(pdf_doc)
     except Exception as e:
-        logger.error("Failed to open PDF for fallback OCR: %s", e)
+        logger.error("Failed to open PDF for Surya OCR: %s", e)
         return []
 
     for page_num in range(total_pages):
         if progress_callback:
             pct = int(85 + (15 * (page_num + 1) / total_pages))
-            await progress_callback(pct, f"Fallback OCR processing page {page_num + 1} of {total_pages}...")
-            
+            await progress_callback(pct, f"Surya-OCR processing page {page_num + 1} of {total_pages}...")
+
         mat = fitz.Matrix(300/72, 300/72)
         try:
             page = pdf_doc[page_num]
             pix = page.get_pixmap(matrix=mat)
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_raw:
                 pix.save(tmp_raw.name)
-                
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_proc:
                 success = preprocess_image(tmp_raw.name, tmp_proc.name)
                 img_to_ocr = tmp_proc.name if success else tmp_raw.name
-                
-            tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
-            
+
+            # Run Surya-OCR layout-guided extraction
+            table_grid = await extract_table_from_image(img_to_ocr)
+
             Path(tmp_raw.name).unlink(missing_ok=True)
             Path(tmp_proc.name).unlink(missing_ok=True)
-            
-            if tsv_text:
-                page_txns = _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
+
+            if table_grid:
+                page_txns = parse_generic_table(table_grid, bank_name, file_hash, column_mapping=column_mapping)
+                for txn in page_txns:
+                    # Surya OCR has higher visual quality default score
+                    txn.ocr_confidence = 0.90
+                    txn.parser_name = "surya_ocr"
                 txns.extend(page_txns)
         except Exception as e:
-            logger.error("Error running fallback OCR on page %d: %s", page_num, e)
-            
+            logger.error("Error running Surya-OCR on page %d: %s", page_num, e)
+
     pdf_doc.close()
+
+    # Year alignment: align any 1900 or 2026/current year transactions to the most common year in the statement
+    if txns:
+        years = [t.txn_date.year for t in txns if t.txn_date and t.txn_date.year not in (datetime.now().year, 2026, 1900)]
+        if years:
+            from collections import Counter
+            most_common_year = Counter(years).most_common(1)[0][0]
+            logger.info("Global year alignment: replacing default 1900/current years with most common year %d", most_common_year)
+            for t in txns:
+                if t.txn_date and t.txn_date.year in (datetime.now().year, 2026, 1900):
+                    try:
+                        t.txn_date = t.txn_date.replace(year=most_common_year)
+                    except ValueError:
+                        pass
+
     return txns
 
 
 async def parse_image_file(file_path: str, bank_name: str, column_mapping: dict = None) -> list[UniversalTransaction]:
     """
-    Run Tesseract OCR directly on image files with preprocessing.
+    Run Surya OCR directly on image files with preprocessing.
     If column_mapping is provided, it is passed to the generic table parser.
     """
-    from img2table.document import Image as Img2TableImage
-    from img2table.ocr import TesseractOCR as Img2TableTesseract
+    import tempfile
+    from pathlib import Path
     from parsers.generic_parser import parse_generic_table
-    import pandas as pd
+    from parsers.surya_parser import extract_table_from_image
 
     file_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
-    
-    # Try img2table first
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_proc:
-            success = preprocess_image(file_path, tmp_proc.name)
-            img_to_process = tmp_proc.name if success else file_path
-            
-        ocr = Img2TableTesseract(n_threads=1, lang="eng")
-        doc = Img2TableImage(src=img_to_process)
-        extracted_tables = doc.extract_tables(ocr=ocr, implicit_rows=True, borderless_tables=True)
-        
-        Path(tmp_proc.name).unlink(missing_ok=True)
-        
-        txns = []
-        for t in extracted_tables:
-            df = t.df
-            if df is None or df.empty:
-                continue
-            
-            table_grid = []
-            headers = [clean_ocr_cell(c) for c in df.columns]
-            if not all(str(h).isdigit() for h in headers):
-                table_grid.append(headers)
-            
-            for _, row in df.iterrows():
-                table_grid.append([clean_ocr_cell(val) for val in row])
-                
-            table_grid = [r for r in table_grid if any(c.strip() for c in r)]
-            page_txns = parse_generic_table(table_grid, bank_name, file_hash, column_mapping=column_mapping)
-            for txn in page_txns:
-                txn.ocr_confidence = 0.82
-            txns.extend(page_txns)
-            
-        if txns:
-            return txns
-    except Exception as e:
-        logger.error("img2table image parsing failed: %s. Falling back to raw OCR.", e)
-        
-    # Fallback to standard Tesseract OCR
+
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_proc:
         success = preprocess_image(file_path, tmp_proc.name)
         img_to_ocr = tmp_proc.name if success else file_path
-        
-    tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
+
+    txns = []
+    try:
+        table_grid = await extract_table_from_image(img_to_ocr)
+        if table_grid:
+            txns = parse_generic_table(table_grid, bank_name, file_hash, column_mapping=column_mapping)
+            for txn in txns:
+                txn.ocr_confidence = 0.90
+                txn.parser_name = "surya_ocr"
+    except Exception as e:
+        logger.error("Surya OCR image parsing failed: %s", e)
+
     Path(tmp_proc.name).unlink(missing_ok=True)
-    
-    if not tsv_text:
-        return []
-    return _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
+    return txns
 
 def group_words_into_rows(words: list) -> list[list[dict]]:
     """
@@ -434,6 +305,45 @@ def detect_column_boundaries(words: list) -> list[int]:
     return boundaries
 
 
+def reconstruct_table_from_words(words: list) -> list[list[str]]:
+    """
+    Reconstruct tabular rows from grouped words using:
+      1. Vertical clustering -> groups words into rows.
+      2. Histogram-based column boundary detection -> finds column separators.
+    """
+    if not words:
+        return []
+
+    # Step 1: Group words into rows
+    rows = group_words_into_rows(words)
+
+    # Step 2: Detect column boundaries from ALL words across the page
+    col_boundaries = detect_column_boundaries(words)
+    num_cols = max(1, len(col_boundaries) - 1)
+
+    # Step 3: Assign each word to a column slot, build table rows
+    table = []
+    for row in rows:
+        col_slots: list[list[str]] = [[] for _ in range(num_cols)]
+        for w in row:
+            # Find which column interval this word's left-edge falls into
+            col_idx = num_cols - 1
+            for i in range(len(col_boundaries) - 1):
+                if col_boundaries[i] <= w["left"] < col_boundaries[i + 1]:
+                    col_idx = i
+                    break
+            col_slots[min(col_idx, num_cols - 1)].append(w["text"])
+
+        cells = [" ".join(slot) for slot in col_slots]
+        # Remove trailing empty cells
+        while cells and not cells[-1].strip():
+            cells.pop()
+        if cells:
+            table.append(cells)
+
+    return table
+
+
 def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
     """
     Reconstruct tabular rows from Tesseract TSV output using:
@@ -474,37 +384,7 @@ def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
         except (ValueError, IndexError):
             continue
 
-    if not words:
-        return []
-
-    # Step 1: Group words into rows
-    rows = group_words_into_rows(words)
-
-    # Step 2: Detect column boundaries from ALL words across the page
-    col_boundaries = detect_column_boundaries(words)
-    num_cols = max(1, len(col_boundaries) - 1)
-
-    # Step 3: Assign each word to a column slot, build table rows
-    table = []
-    for row in rows:
-        col_slots: list[list[str]] = [[] for _ in range(num_cols)]
-        for w in row:
-            # Find which column interval this word's left-edge falls into
-            col_idx = num_cols - 1
-            for i in range(len(col_boundaries) - 1):
-                if col_boundaries[i] <= w["left"] < col_boundaries[i + 1]:
-                    col_idx = i
-                    break
-            col_slots[min(col_idx, num_cols - 1)].append(w["text"])
-
-        cells = [" ".join(slot) for slot in col_slots]
-        # Remove trailing empty cells
-        while cells and not cells[-1].strip():
-            cells.pop()
-        if cells:
-            table.append(cells)
-
-    return table
+    return reconstruct_table_from_words(words)
 
 
 # Date pattern: matches "2 Jan 2013", "04-01-2013", "2013-01-04", "04/01/2013" etc.

@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
             async with engine.begin() as conn:
                 await conn.execute(text("ALTER TABLE statements ADD COLUMN IF NOT EXISTS parse_progress INTEGER DEFAULT 0;"))
                 await conn.execute(text("ALTER TABLE statements ADD COLUMN IF NOT EXISTS parse_stage VARCHAR(255) DEFAULT 'PENDING';"))
+                await conn.execute(text("ALTER TABLE statements ADD COLUMN IF NOT EXISTS preview_rows JSONB DEFAULT NULL;"))
             await engine.dispose()
         except Exception as e:
             print(f"Error initializing database columns: {e}")

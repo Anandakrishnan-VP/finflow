@@ -14,4 +14,8 @@ COPY scripts/ ./scripts/
 RUN mkdir -p /data/uploads /data/reports
 RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports
 USER finflow
+
+# Pre-download Surya model weights to the container's HuggingFace cache for offline portability
+RUN python -c "from surya.detection import DetectionPredictor; from surya.layout import LayoutPredictor; from surya.recognition import RecognitionPredictor; from surya.foundation import FoundationPredictor; from surya.settings import settings; DetectionPredictor(); RecognitionPredictor(FoundationPredictor(checkpoint=settings.RECOGNITION_MODEL_CHECKPOINT)); LayoutPredictor(FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT))"
+
 CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2"]

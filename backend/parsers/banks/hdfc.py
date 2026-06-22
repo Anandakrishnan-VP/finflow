@@ -35,7 +35,17 @@ def _parse_amount(s: str) -> Optional[Decimal]:
     except InvalidOperation:
         return None
 
+def _get_file_hash(file_path: str) -> str:
+    if not file_path:
+        return ""
+    try:
+        with open(file_path, "rb") as f:
+            return hashlib.sha256(f.read(8192)).hexdigest()
+    except Exception:
+        return ""
+
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     # Try camelot lattice first
     try:
         import camelot
@@ -46,7 +56,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                 cells = [str(c).strip() for c in row]
                 if not _is_header(cells):
                     all_rows.append(cells)
-        txns = _parse_rows(all_rows, file_path)
+        txns = _parse_rows(all_rows, file_hash)
         if txns:
             return txns
     except Exception as e:
@@ -68,7 +78,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                     cells = [str(c or "").strip() for c in row]
                     if not cells or _is_header(cells):
                         continue
-                    txn = _parse_hdfc_row(cells, account_id, account_holder, file_path)
+                    txn = _parse_hdfc_row(cells, account_id, account_holder, file_hash)
                     if txn:
                         txns.append(txn)
     except Exception as e:
@@ -93,11 +103,11 @@ def _extract_account_info(text: str) -> tuple:
         account_holder = m.group(1).strip()
     return account_id, account_holder
 
-def _parse_rows(rows: list, file_path: str) -> list[UniversalTransaction]:
-    return [t for t in (_parse_hdfc_row(r, "", "", file_path) for r in rows) if t]
+def _parse_rows(rows: list, file_hash: str) -> list[UniversalTransaction]:
+    return [t for t in (_parse_hdfc_row(r, "", "", file_hash) for r in rows) if t]
 
 def _parse_hdfc_row(cells: list, account_id: str,
-                    account_holder: str, file_path: str) -> Optional[UniversalTransaction]:
+                    account_holder: str, file_hash: str) -> Optional[UniversalTransaction]:
     # HDFC column order: Date | Narration | Value Dt | Debit | Credit | Balance
     try:
         if len(cells) < 5:
@@ -123,7 +133,6 @@ def _parse_hdfc_row(cells: list, account_id: str,
         else:
             return None
 
-        file_hash = hashlib.sha256(open(file_path,"rb").read(8192)).hexdigest() if file_path else ""
         txn_hash = hashlib.sha256(
             f"{account_id}|{date.isoformat()}|{amount}|{narration}".encode()
         ).hexdigest()
@@ -139,17 +148,19 @@ def _parse_hdfc_row(cells: list, account_id: str,
         return None
 
 async def parse_excel(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     import openpyxl
     wb = openpyxl.load_workbook(file_path, data_only=True)
     ws = wb.active
     rows = [[str(c or "").strip() for c in row] for row in ws.iter_rows(values_only=True)]
     start = next((i+1 for i, r in enumerate(rows) if _is_header(r)), 0)
-    return _parse_rows(rows[start:], file_path)
+    return _parse_rows(rows[start:], file_hash)
 
 async def parse_csv(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     import csv, chardet
     enc = chardet.detect(open(file_path,"rb").read())["encoding"] or "utf-8"
     with open(file_path, encoding=enc, errors="replace") as f:
         rows = [[c.strip() for c in r] for r in csv.reader(f)]
     start = next((i+1 for i, r in enumerate(rows) if _is_header(r)), 0)
-    return _parse_rows(rows[start:], file_path)
+    return _parse_rows(rows[start:], file_hash)

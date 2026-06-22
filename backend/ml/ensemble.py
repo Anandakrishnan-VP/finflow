@@ -63,13 +63,8 @@ def run_lgbm_weak(
     if model is None:
         model_path = os.path.join(model_dir, "lgbm_weak.joblib")
         # In-pipeline training
-        X_all = []
-        y_all = []
-        for t in txns:
-            X_all.append(extract_features([t])[0])
-            y_all.append(1 if t.flags else 0)
-        X_all = np.array(X_all)
-        y_all = np.array(y_all)
+        X_all = extract_features(txns)
+        y_all = np.array([1 if t.flags else 0 for t in txns])
 
         if y_all.sum() < 5 or (len(y_all) - y_all.sum()) < 5:
             logger.info("LightGBM: not enough class balance for training, skipping")

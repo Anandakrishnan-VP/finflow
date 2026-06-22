@@ -83,7 +83,10 @@ services:
       UPLOAD_DIR: /data/uploads
       REPORT_DIR: /data/reports
       MODEL_DIR: /app/models
+      SURYA_DEVICE: ${SURYA_DEVICE:-auto}
     volumes:
+      - ./backend:/app
+      - ./scripts:/app/scripts
       - uploads:/data/uploads
       - reports:/data/reports
       - ./models:/app/models:ro
@@ -121,7 +124,10 @@ services:
       UPLOAD_DIR: /data/uploads
       REPORT_DIR: /data/reports
       MODEL_DIR: /app/models
+      SURYA_DEVICE: ${SURYA_DEVICE:-auto}
     volumes:
+      - ./backend:/app
+      - ./scripts:/app/scripts
       - uploads:/data/uploads
       - reports:/data/reports
       - ./models:/app/models:ro

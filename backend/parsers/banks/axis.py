@@ -30,7 +30,15 @@ def _is_header(cells):
     t = " ".join(c.lower() for c in cells)
     return sum(1 for k in ["tran","withdrawal","deposit","balance","particular"] if k in t) >= 2
 
-def _parse_row(cells, account_id, account_holder, file_path):
+def _get_file_hash(file_path: str) -> str:
+    if not file_path: return ""
+    try:
+        with open(file_path, "rb") as f:
+            return hashlib.sha256(f.read(8192)).hexdigest()
+    except Exception:
+        return ""
+
+def _parse_row(cells, account_id, account_holder, file_hash):
     try:
         if len(cells) < 5: return None
         date = _pd(cells[0])
@@ -52,7 +60,7 @@ def _parse_row(cells, account_id, account_holder, file_path):
         h = hashlib.sha256(f"{account_id}|{date.isoformat()}|{amount}|{narration}".encode()).hexdigest()
         return UniversalTransaction(
             txn_hash=h, case_id="", statement_id="",
-            source_file_hash=hashlib.sha256(open(file_path,"rb").read(8192)).hexdigest() if file_path else "",
+            source_file_hash=file_hash,
             account_id=account_id, account_holder=account_holder, bank_name=BANK_NAME,
             txn_date=date, amount=amount, txn_type=txn_type, balance_after=bal, narration=narration,
         )
@@ -61,12 +69,13 @@ def _parse_row(cells, account_id, account_holder, file_path):
         return None
 
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     txns = []
     try:
         import camelot
         tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
         rows = [list(map(str, r)) for t in tables for _, r in t.df.iterrows() if not _is_header(list(map(str, r)))]
-        txns = [t for r in rows for t in [_parse_row(r, "", "", file_path)] if t]
+        txns = [t for r in rows for t in [_parse_row(r, "", "", file_hash)] if t]
         if txns: return txns
     except Exception: pass
     try:
@@ -77,7 +86,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                 for row in table:
                     cells = [str(c or "").strip() for c in row]
                     if _is_header(cells): continue
-                    t = _parse_row(cells, "", "", file_path)
+                    t = _parse_row(cells, "", "", file_hash)
                     if t: txns.append(t)
         if txns: return txns
     except Exception: pass
@@ -85,16 +94,18 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
     return await parse_scanned_pdf(file_path, BANK_NAME)
 
 async def parse_excel(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     import openpyxl
     wb = openpyxl.load_workbook(file_path, data_only=True)
     rows = [[str(c or "").strip() for c in r] for r in wb.active.iter_rows(values_only=True)]
     start = next((i+1 for i, r in enumerate(rows) if _is_header(r)), 0)
-    return [t for r in rows[start:] for t in [_parse_row(r, "", "", "")] if t]
+    return [t for r in rows[start:] for t in [_parse_row(r, "", "", file_hash)] if t]
 
 async def parse_csv(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     import csv, chardet
     enc = chardet.detect(open(file_path,"rb").read())["encoding"] or "utf-8"
     with open(file_path, encoding=enc, errors="replace") as f:
         rows = [[c.strip() for c in r] for r in csv.reader(f)]
     start = next((i+1 for i, r in enumerate(rows) if _is_header(r)), 0)
-    return [t for r in rows[start:] for t in [_parse_row(r, "", "", "")] if t]
+    return [t for r in rows[start:] for t in [_parse_row(r, "", "", file_hash)] if t]

@@ -45,7 +45,17 @@ def _make_hash(account_id: str, date: datetime, amount: Decimal, narration: str)
         f"{account_id}|{date.isoformat()}|{amount}|{narration}".encode()
     ).hexdigest()
 
+def _get_file_hash(file_path: str) -> str:
+    if not file_path:
+        return ""
+    try:
+        with open(file_path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return ""
+
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     # Pre-extract account info from the first page text
     account_id, account_holder = "", ""
     try:
@@ -66,7 +76,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                 cells = [str(c).strip() for c in row]
                 if not _is_header_row([c.lower() for c in cells]):
                     all_rows.append(cells)
-        txns = _normalize_sbi_rows(all_rows, file_path, account_id, account_holder)
+        txns = _normalize_sbi_rows(all_rows, file_hash, account_id, account_holder)
         if txns:
             return txns
     except Exception as e:
@@ -87,7 +97,7 @@ async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
                     cells = [str(c or "").strip() for c in row]
                     if not cells or _is_header_row([c.lower() for c in cells]):
                         continue
-                    txn = _parse_sbi_row(cells, account_id, account_holder, file_path)
+                    txn = _parse_sbi_row(cells, account_id, account_holder, file_hash)
                     if txn:
                         txns.append(txn)
     except Exception as e:
@@ -108,15 +118,15 @@ def _extract_account_info(text: str) -> tuple[str, str]:
         account_holder = m.group(1).strip()
     return account_id, account_holder
 
-def _normalize_sbi_rows(rows: list, file_path: str, account_id: str = "", account_holder: str = "") -> list[UniversalTransaction]:
+def _normalize_sbi_rows(rows: list, file_hash: str, account_id: str = "", account_holder: str = "") -> list[UniversalTransaction]:
     txns = []
     for cells in rows:
-        t = _parse_sbi_row(cells, account_id, account_holder, file_path)
+        t = _parse_sbi_row(cells, account_id, account_holder, file_hash)
         if t:
             txns.append(t)
     return txns
 
-def _parse_sbi_row(cells: list[str], account_id: str, account_holder: str, file_path: str) -> Optional[UniversalTransaction]:
+def _parse_sbi_row(cells: list[str], account_id: str, account_holder: str, file_hash: str) -> Optional[UniversalTransaction]:
     try:
         if len(cells) < 5:
             return None
@@ -160,7 +170,7 @@ def _parse_sbi_row(cells: list[str], account_id: str, account_holder: str, file_
             txn_hash=txn_hash,
             case_id="",
             statement_id="",
-            source_file_hash=hashlib.sha256(open(file_path,"rb").read()).hexdigest() if file_path else "",
+            source_file_hash=file_hash,
             account_id=account_id,
             account_holder=account_holder,
             bank_name=BANK_NAME,
@@ -175,6 +185,7 @@ def _parse_sbi_row(cells: list[str], account_id: str, account_holder: str, file_
         return None
 
 async def parse_excel(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     import openpyxl
     wb = openpyxl.load_workbook(file_path, data_only=True)
     ws = wb.active
@@ -188,9 +199,10 @@ async def parse_excel(file_path: str) -> list[UniversalTransaction]:
     if header_row is None:
         return []
     data_rows = [[str(c or "").strip() for c in row] for row in rows[header_row+1:]]
-    return _normalize_sbi_rows(data_rows, file_path)
+    return _normalize_sbi_rows(data_rows, file_hash)
 
 async def parse_csv(file_path: str) -> list[UniversalTransaction]:
+    file_hash = _get_file_hash(file_path)
     import csv, chardet
     raw = open(file_path, "rb").read()
     enc = chardet.detect(raw)["encoding"] or "utf-8"
@@ -204,4 +216,4 @@ async def parse_csv(file_path: str) -> list[UniversalTransaction]:
         if _is_header_row([c.lower() for c in row]):
             start = i + 1
             break
-    return _normalize_sbi_rows(rows[start:], file_path)
+    return _normalize_sbi_rows(rows[start:], file_hash)
