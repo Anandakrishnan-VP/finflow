@@ -141,70 +141,83 @@ export default function ExecutiveSummaryPanel({ caseId }) {
   const suspectsCount = verdicts.filter(v => v.role_label && v.role_label !== 'CLEAR').length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-xs animate-fade-in">
+      
       {/* Top Row: KPIs and Quick Actions */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 w-full md:w-auto md:flex-1">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-white dark:bg-cardDark border border-borderLight dark:border-borderDark rounded-enterprise p-6 shadow-sm">
+        
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 w-full lg:w-auto lg:flex-1">
           <div>
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Transactions</div>
-            <div className="text-2xl font-bold text-slate-900 mt-1">{summary?.transaction_count ?? '—'}</div>
+            <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Transactions</div>
+            <div className="text-xl font-extrabold text-slate-900 dark:text-white mt-1.5">{summary?.transaction_count ?? '—'}</div>
           </div>
-          <div className="border-l border-slate-100 pl-6">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Scrutinized</div>
-            <div className="text-2xl font-bold text-slate-900 mt-1">
+          <div className="border-l border-slate-100 dark:border-slate-800 pl-6">
+            <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Total Scrutinized</div>
+            <div className="text-xl font-extrabold text-slate-900 dark:text-white mt-1.5">
               ₹{summary?.total_amount ? Number(summary.total_amount).toLocaleString('en-IN') : '—'}
             </div>
           </div>
-          <div className="border-l border-slate-100 pl-6">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Suspect Accounts</div>
-            <div className="text-2xl font-bold text-red-600 mt-1">{suspectsCount}</div>
+          <div className="border-l border-slate-100 dark:border-slate-800 pl-6">
+            <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Suspect Accounts</div>
+            <div className="text-xl font-extrabold text-danger mt-1.5">{suspectsCount}</div>
           </div>
-          <div className="border-l border-slate-100 pl-6">
-            <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Pending Tasks</div>
-            <div className="text-2xl font-bold text-indigo-600 mt-1">
+          <div className="border-l border-slate-100 dark:border-slate-800 pl-6">
+            <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Pending Tasks</div>
+            <div className="text-xl font-extrabold text-accent mt-1.5">
               {nextActions.filter(a => !a.completed).length}
             </div>
           </div>
         </div>
         
-        <div>
+        <div className="w-full lg:w-auto">
           <button
             onClick={handleDownloadBrief}
             disabled={downloading}
-            className="flex items-center gap-2 bg-slate-900 text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-800 disabled:opacity-50 transition-colors shadow-sm"
+            className="w-full lg:w-auto bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-btn px-5 py-3 font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
           >
-            {downloading ? 'Generating...' : 'Download Officer Brief PDF'}
+            {downloading ? (
+              <div className="w-3.5 h-3.5 rounded-full border border-white border-t-transparent animate-spin" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+              </svg>
+            )}
+            <span>Download Officer Brief PDF</span>
           </button>
         </div>
+
       </div>
 
       {/* Main Grid Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Left/Middle Column - Checklist, Syndicates, Annotations */}
+        {/* Left/Middle Column - Checklist, Syndicates, Annotations (2 Columns) */}
         <div className="lg:col-span-2 space-y-6">
           
           {/* 1. Next Actions Checklist */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="font-bold text-slate-800 text-base mb-4 border-b border-slate-100 pb-2">Investigation Checklist</div>
+          <div className="bg-white dark:bg-cardDark border border-borderLight dark:border-borderDark rounded-enterprise p-5 shadow-sm">
+            <div className="border-b border-borderLight dark:border-borderDark pb-2.5 mb-4">
+              <h3 className="font-bold text-slate-800 dark:text-white text-sm">Investigation Checklist</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">Recommendations and task actions assigned to this case.</p>
+            </div>
             
             <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
               {nextActions.length === 0 ? (
-                <div className="text-xs text-slate-400 italic">No checklist items generated yet. Run analysis to seed recommendations.</div>
+                <div className="text-slate-400 italic py-2">No checklist items generated yet. Run analysis to seed recommendations.</div>
               ) : (
                 nextActions.map(action => (
-                  <div key={action.id} className="flex items-start gap-3 p-2 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors">
+                  <div key={action.id} className="flex items-start gap-3 p-3 bg-slate-50/50 dark:bg-slate-900/20 border border-borderLight dark:border-borderDark/60 rounded-xl hover:bg-slate-100/30 dark:hover:bg-slate-800/20 transition-colors">
                     <input
                       type="checkbox"
                       checked={action.completed}
                       onChange={() => handleToggleAction(action.id, action.completed)}
-                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      className="mt-0.5 h-4.5 w-4.5 rounded border-slate-300 dark:border-borderDark text-accent focus:ring-accent cursor-pointer bg-white dark:bg-slate-900"
                     />
-                    <div className="flex-1">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded mr-2 ${action.completed ? 'bg-slate-200 text-slate-500' : 'bg-indigo-100 text-indigo-700'}`}>
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${action.completed ? 'bg-slate-100 dark:bg-slate-800/40 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-800' : 'bg-accent/10 border-accent/20 text-accent font-mono'}`}>
                         {action.account_id}
                       </span>
-                      <p className={`text-xs text-slate-700 mt-0.5 inline-block ${action.completed ? 'line-through text-slate-400' : ''}`}>
+                      <p className={`text-xs text-slate-700 dark:text-slate-300 mt-1.5 font-medium leading-relaxed ${action.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
                         {action.action_text}
                       </p>
                     </div>
@@ -214,64 +227,68 @@ export default function ExecutiveSummaryPanel({ caseId }) {
             </div>
 
             {/* Custom Next Action Input */}
-            <form onSubmit={handleAddCustomAction} className="mt-4 pt-3 border-t border-slate-100 space-y-2">
-              <div className="text-xs font-semibold text-slate-600">Create Custom Next Action</div>
-              <div className="flex gap-2">
+            <form onSubmit={handleAddCustomAction} className="mt-5 pt-4 border-t border-borderLight dark:border-borderDark space-y-3">
+              <span className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Create Custom Action</span>
+              <div className="flex gap-3">
                 <input
                   type="text"
                   placeholder="Linked Account (e.g. 1004561)..."
-                  className="w-1/3 p-1.5 border border-slate-200 rounded-lg text-xs"
+                  className="w-1/2 p-2.5 border border-borderLight dark:border-borderDark rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
                   value={newActionAccount}
                   onChange={e => setNewActionAccount(e.target.value)}
                 />
                 <input
                   type="text"
                   placeholder="Task Key (e.g. SUMMONS)..."
-                  className="w-1/3 p-1.5 border border-slate-200 rounded-lg text-xs"
+                  className="w-1/2 p-2.5 border border-borderLight dark:border-borderDark rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
                   value={newActionKey}
                   onChange={e => setNewActionKey(e.target.value)}
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-3">
                 <input
                   type="text"
                   placeholder="Describe required investigation task..."
-                  className="flex-1 p-1.5 border border-slate-200 rounded-lg text-xs"
+                  className="flex-1 p-2.5 border border-borderLight dark:border-borderDark rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
                   value={newActionText}
                   onChange={e => setNewActionText(e.target.value)}
                   required
                 />
                 <button
                   type="submit"
-                  className="bg-indigo-600 text-white text-xs px-3 rounded-lg hover:bg-indigo-500 transition-colors font-semibold"
+                  className="bg-accent hover:bg-accent-hover text-white px-4 rounded-btn font-bold transition-all shadow-md shadow-accent/15"
                 >
-                  Add
+                  Add Task
                 </button>
               </div>
             </form>
           </div>
 
           {/* 2. Cross-Case Syndicate overlap */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="font-bold text-slate-800 text-base mb-4 border-b border-slate-100 pb-2">Multi-Case Syndicate overlaps</div>
-            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+          <div className="bg-white dark:bg-cardDark border border-borderLight dark:border-borderDark rounded-enterprise p-5 shadow-sm">
+            <div className="border-b border-borderLight dark:border-borderDark pb-2.5 mb-4">
+              <h3 className="font-bold text-slate-800 dark:text-white text-sm">Multi-Case Syndicate Overlaps</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">Overlap markers identified across other cases in the system database.</p>
+            </div>
+            
+            <div className="space-y-3.5 max-h-56 overflow-y-auto pr-1">
               {syndicates.length === 0 ? (
-                <div className="text-xs text-slate-400 italic">No cross-case identifier matches detected for this case.</div>
+                <div className="text-slate-400 italic py-2">No cross-case identifier matches detected for this case.</div>
               ) : (
                 syndicates.map((syn, idx) => (
-                  <div key={idx} className="p-3 bg-red-50 border border-red-100 rounded-xl flex justify-between items-start gap-4">
+                  <div key={idx} className="p-3.5 bg-danger/5 dark:bg-danger/10 border border-danger/20 rounded-xl flex justify-between items-start gap-4 animate-pulse">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                        <span className="text-[9px] font-bold uppercase tracking-wider bg-danger/15 text-danger px-2 py-0.5 rounded-full border border-danger/20">
                           {syn.match_type} MATCH
                         </span>
-                        <span className="text-xs font-semibold text-slate-800">{syn.matched_value}</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-200">{syn.matched_value}</span>
                       </div>
-                      <p className="text-xs text-slate-600 mt-1">{syn.details}</p>
+                      <p className="text-slate-600 dark:text-slate-400 mt-2 font-medium leading-relaxed">{syn.details}</p>
                     </div>
                     <div className="text-right">
-                      <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Overlapping Case</div>
-                      <div className="text-xs font-semibold text-slate-700 mt-0.5">{syn.matched_case_title}</div>
+                      <span className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold block">Overlapping File</span>
+                      <div className="text-xs font-bold text-slate-700 dark:text-slate-300 mt-1">{syn.matched_case_title}</div>
                     </div>
                   </div>
                 ))
@@ -280,42 +297,45 @@ export default function ExecutiveSummaryPanel({ caseId }) {
           </div>
 
           {/* 3. Case Annotations and Notes */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="font-bold text-slate-800 text-base mb-4 border-b border-slate-100 pb-2">Officer notes & Annotations</div>
+          <div className="bg-white dark:bg-cardDark border border-borderLight dark:border-borderDark rounded-enterprise p-5 shadow-sm">
+            <div className="border-b border-borderLight dark:border-borderDark pb-2.5 mb-4">
+              <h3 className="font-bold text-slate-800 dark:text-white text-sm">Officer log Notes & Annotations</h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">Timeline of administrative notes saved by investigators.</p>
+            </div>
             
-            <div className="space-y-3 max-h-60 overflow-y-auto pr-1 mb-4">
+            <div className="space-y-3.5 max-h-60 overflow-y-auto pr-1 mb-4">
               {annotations.length === 0 ? (
-                <div className="text-xs text-slate-400 italic">No notes added yet. Write notes below.</div>
+                <div className="text-slate-400 italic py-2">No notes added yet. Write notes below.</div>
               ) : (
                 annotations.map(note => (
-                  <div key={note.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                    <div className="flex justify-between items-center text-[10px] text-slate-400 font-semibold mb-1">
+                  <div key={note.id} className="p-3.5 bg-slate-50/50 dark:bg-slate-900/20 border border-borderLight dark:border-borderDark/60 rounded-xl">
+                    <div className="flex justify-between items-center text-[9px] text-slate-400 dark:text-slate-500 font-bold mb-2">
                       <span>{note.username || 'System'}</span>
                       <span>{new Date(note.created_at).toLocaleString()}</span>
                     </div>
                     {note.account_id && (
-                      <span className="inline-block text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded mb-1">
+                      <span className="inline-block text-[9px] font-mono font-bold bg-accent/15 text-accent px-1.5 py-0.5 rounded border border-accent/20 mb-2">
                         ACCOUNT: {note.account_id}
                       </span>
                     )}
-                    <p className="text-xs text-slate-700 whitespace-pre-wrap">{note.annotation}</p>
+                    <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-medium leading-relaxed">{note.annotation}</p>
                   </div>
                 ))
               )}
             </div>
 
-            <form onSubmit={handleAddAnnotation} className="flex gap-2">
+            <form onSubmit={handleAddAnnotation} className="flex gap-3">
               <input
                 type="text"
                 placeholder="Write general investigation note or update..."
-                className="flex-1 p-2 border border-slate-200 rounded-lg text-xs"
+                className="flex-1 p-2.5 border border-borderLight dark:border-borderDark rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none"
                 value={newAnnotation}
                 onChange={e => setNewAnnotation(e.target.value)}
                 required
               />
               <button
                 type="submit"
-                className="bg-slate-900 text-white text-xs px-4 rounded-lg hover:bg-slate-800 font-semibold transition-colors"
+                className="bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white rounded-btn px-4 font-bold transition-colors"
               >
                 Save Note
               </button>
@@ -324,25 +344,30 @@ export default function ExecutiveSummaryPanel({ caseId }) {
 
         </div>
 
-        {/* Right Column - Interactive AI Case Assistant */}
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-col h-[650px]">
-          <div className="font-bold text-slate-800 text-base border-b border-slate-100 pb-2 mb-3">AI Case Assistant</div>
+        {/* Right Column - Interactive AI Case Assistant (1 Column) */}
+        <div className="bg-white dark:bg-cardDark border border-borderLight dark:border-borderDark rounded-enterprise p-5 shadow-sm flex flex-col h-[650px]">
+          
+          <div className="border-b border-borderLight dark:border-borderDark pb-2.5 mb-4">
+            <h3 className="font-bold text-slate-800 dark:text-white text-sm">AI Case Assistant</h3>
+            <p className="text-[10px] text-slate-400 mt-0.5">Ask questions directly regarding cases details.</p>
+          </div>
           
           {/* Chat message space */}
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-3">
+          <div className="flex-1 overflow-y-auto space-y-4 pr-1 mb-4 scrollbar-thin">
             {chatMessages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed shadow-sm
+                <div className={`max-w-[85%] rounded-2xl p-3.5 leading-relaxed shadow-sm font-medium
                   ${msg.role === 'user' 
-                    ? 'bg-indigo-600 text-white rounded-tr-none' 
-                    : 'bg-slate-100 text-slate-800 rounded-tl-none border border-slate-200'}`}>
+                    ? 'bg-accent text-white rounded-tr-none' 
+                    : 'bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 rounded-tl-none border border-borderLight dark:border-borderDark'}`}>
                   {msg.content}
                 </div>
               </div>
             ))}
+            
             {chatLoading && (
               <div className="flex justify-start">
-                <div className="bg-slate-100 text-slate-400 rounded-2xl rounded-tl-none p-3 text-xs border border-slate-200 italic animate-pulse">
+                <div className="bg-slate-50 dark:bg-slate-900 text-slate-400 rounded-2xl rounded-tl-none p-3.5 border border-borderLight dark:border-borderDark italic animate-pulse">
                   AI is studying case context...
                 </div>
               </div>
@@ -351,11 +376,11 @@ export default function ExecutiveSummaryPanel({ caseId }) {
           </div>
 
           {/* Send Input */}
-          <form onSubmit={handleSendMessage} className="flex gap-1.5 border-t border-slate-100 pt-3">
+          <form onSubmit={handleSendMessage} className="flex gap-2 border-t border-borderLight dark:border-borderDark pt-4">
             <input
               type="text"
               placeholder="Ask about mules, loops, legal actions..."
-              className="flex-1 p-2 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+              className="flex-1 p-2.5 border border-borderLight dark:border-borderDark rounded-lg bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-accent"
               value={chatInput}
               onChange={e => setChatInput(e.target.value)}
               disabled={chatLoading}
@@ -364,7 +389,7 @@ export default function ExecutiveSummaryPanel({ caseId }) {
             <button
               type="submit"
               disabled={chatLoading}
-              className="bg-indigo-600 text-white text-xs font-semibold px-4 rounded-lg hover:bg-indigo-500 transition-colors disabled:opacity-50"
+              className="bg-accent hover:bg-accent-hover text-white font-bold px-4 rounded-btn transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-accent/20"
             >
               Send
             </button>

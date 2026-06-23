@@ -9,17 +9,19 @@ export default function ProgressBar({ taskId, onComplete }) {
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div>
-      <div className="flex justify-between text-xs text-slate-500 mb-1">
-        <span>{stage || 'Connecting...'}</span>
-        <span>{progress}%</span>
+    <div className="text-xs font-medium space-y-2">
+      <div className="flex justify-between items-center text-slate-500 dark:text-slate-400">
+        <span className="font-semibold text-slate-700 dark:text-slate-200">{stage || 'Initializing connection...'}</span>
+        <span className="font-mono">{progress}%</span>
       </div>
-      <div className="w-full bg-slate-100 rounded-full h-2">
-        <div className={`h-2 rounded-full transition-all ${status === 'failed' ? 'bg-red-500' : 'bg-slate-900'}`}
-             style={{ width: `${Math.max(progress, 2)}%` }} />
+      <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden shadow-inner">
+        <div 
+          className={`h-2 rounded-full transition-all duration-300 ${status === 'failed' ? 'bg-danger' : 'bg-accent animate-pulse'}`}
+          style={{ width: `${Math.max(progress, 2)}%` }} 
+        />
       </div>
-      {status === 'disconnected' && <div className="text-xs text-amber-600 mt-1">Reconnecting...</div>}
-      {status === 'failed' && <div className="text-xs text-red-600 mt-1">{error || 'Analysis failed'}</div>}
+      {status === 'disconnected' && <div className="text-[10px] text-warning font-semibold animate-pulse">Reconnecting to server...</div>}
+      {status === 'failed' && <div className="text-[10px] text-danger font-semibold">{error || 'Pipeline execution failed'}</div>}
     </div>
   );
 }

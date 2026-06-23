@@ -78,12 +78,12 @@ lgbm = lgb.LGBMClassifier(
     reg_lambda=0.1,
     random_state=42,
     verbose=-1,
-    n_jobs=-1,
+    n_jobs=1,
 )
 
 # 5-fold cross-validation for honest AUC estimate
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-auc_scores = cross_val_score(lgbm, X, y, cv=cv, scoring="roc_auc", n_jobs=-1)
+auc_scores = cross_val_score(lgbm, X, y, cv=cv, scoring="roc_auc", n_jobs=1)
 print(f"  Cross-validated AUC: {auc_scores.mean():.4f} +/- {auc_scores.std():.4f}")
 
 # Train on full dataset

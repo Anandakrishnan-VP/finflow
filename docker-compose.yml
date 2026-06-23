@@ -86,7 +86,7 @@ services:
     volumes:
       - uploads:/data/uploads
       - reports:/data/reports
-      - ./models:/app/models:ro
+      - ./models:/app/models
     networks:
       - internal
       - external
@@ -123,7 +123,7 @@ services:
     volumes:
       - uploads:/data/uploads
       - reports:/data/reports
-      - ./models:/app/models:ro
+      - ./models:/app/models
     networks:
       - internal
     security_opt:

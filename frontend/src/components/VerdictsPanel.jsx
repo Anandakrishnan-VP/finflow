@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 
 const TIER_COLORS = {
-  CROSS_VALIDATED_HIGH: 'bg-rose-50 text-rose-700 border border-rose-200',
-  DIVERGENT_ALGO_ONLY: 'bg-amber-50 text-amber-700 border border-amber-200',
-  DIVERGENT_LLM_ONLY: 'bg-purple-50 text-purple-700 border border-purple-200',
-  ALGO_FLAGGED_PENDING_REVIEW: 'bg-sky-50 text-sky-700 border border-sky-200',
-  ALGO_CLEAR_NOT_REVIEWED: 'bg-slate-100 text-slate-600 border border-slate-200',
-  CROSS_VALIDATED_CLEAR: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  CROSS_VALIDATED_HIGH: 'bg-danger/10 text-danger border border-danger/20 dark:bg-danger/5',
+  DIVERGENT_ALGO_ONLY: 'bg-warning/10 text-warning border border-warning/20 dark:bg-warning/5',
+  DIVERGENT_LLM_ONLY: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/20 dark:bg-purple-500/5',
+  ALGO_FLAGGED_PENDING_REVIEW: 'bg-accent/10 text-accent border border-accent/20 dark:bg-accent/5',
+  ALGO_CLEAR_NOT_REVIEWED: 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700',
+  CROSS_VALIDATED_CLEAR: 'bg-success/10 text-success border border-success/20 dark:bg-success/5',
 };
 
 const FACTOR_LABELS = {
@@ -19,9 +19,9 @@ const FACTOR_LABELS = {
 };
 
 const FACTOR_COLORS = {
-  watchlist_hit: 'bg-red-500',
-  rule_severity: 'bg-amber-500',
-  isolation_forest: 'bg-indigo-500',
+  watchlist_hit: 'bg-danger',
+  rule_severity: 'bg-warning',
+  isolation_forest: 'bg-accent',
   taint_propagation: 'bg-purple-500',
   betweenness: 'bg-teal-500',
 };
@@ -61,30 +61,33 @@ export default function VerdictsPanel({ caseId }) {
 
   if (loading && verdicts.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900"></div>
-        <span className="ml-3 text-sm text-slate-500">Loading verdicts...</span>
+      <div className="flex flex-col items-center justify-center py-20 gap-4">
+        <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-accent animate-spin" />
+        <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider animate-pulse">Loading verdicts...</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
+    <div className="space-y-6 text-xs animate-fade-in">
+      
+      {/* Title Header */}
+      <div className="flex justify-between items-center border-b border-borderLight dark:border-borderDark pb-5">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Consolidated Risk Verdicts</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Cross-validation of statistical rules, graph GDS, and blind LLM second opinions.
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">Consolidated Risk Verdicts</h2>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Cross-validation of statistical rules, graph GDS algorithms, and blind AI second opinions.
           </p>
         </div>
         <button
           onClick={loadVerdicts}
-          className="text-xs border border-slate-200 hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-md font-medium transition"
+          className="px-4 py-2 border border-borderLight dark:border-borderDark hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold rounded-btn transition"
         >
-          Refresh
+          Refresh Ledger
         </button>
       </div>
 
+      {/* Grid List */}
       <div className="grid grid-cols-1 gap-6">
         {verdicts.map((v) => {
           const breakdown = v.score_breakdown || {};
@@ -93,71 +96,75 @@ export default function VerdictsPanel({ caseId }) {
           return (
             <div
               key={v.account_id}
-              className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition duration-200"
+              className="bg-white dark:bg-cardDark border border-borderLight dark:border-borderDark rounded-enterprise overflow-hidden shadow-sm hover:shadow-md transition duration-200"
             >
-              {/* Card Header */}
-              <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex flex-wrap gap-4 items-center justify-between">
+              {/* Card Header Section */}
+              <div className="px-5 py-4 border-b border-borderLight dark:border-borderDark bg-slate-50/50 dark:bg-slate-900/30 flex flex-wrap gap-4 items-center justify-between">
                 <div className="space-y-1">
                   <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm font-semibold text-slate-800">
+                    <span className="font-mono text-sm font-bold text-slate-800 dark:text-white">
                       {v.account_id}
                     </span>
-                    <span className={`text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full uppercase ${TIER_COLORS[v.agreement_tier] || 'bg-slate-100 text-slate-600'}`}>
+                    <span className={`text-[9px] font-bold tracking-wider px-2.5 py-1 rounded-full uppercase border ${TIER_COLORS[v.agreement_tier] || 'bg-slate-100 text-slate-600'}`}>
                       {v.agreement_tier.replace(/_/g, ' ')}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500 font-medium">
+                  <div className="text-[10px] text-slate-500 font-medium">
                     {v.tier_label}
                   </div>
                 </div>
 
-                {/* Composite Score Circle badge */}
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Composite Score</div>
-                    <div className="text-xs text-slate-400 font-medium">Algo Verdict: <span className="font-bold text-slate-700">{v.algo_verdict}</span></div>
+                {/* Score badge indicator */}
+                <div className="flex items-center gap-4">
+                  <div className="text-right space-y-0.5">
+                    <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Composite Score</div>
+                    <div className="text-[10px] text-slate-400 font-semibold">Algo Verdict: <span className="font-bold text-slate-700 dark:text-slate-200">{v.algo_verdict}</span></div>
                   </div>
-                  <div className="flex items-center justify-center w-14 h-14 rounded-full bg-slate-900 text-white font-semibold text-lg relative">
+                  
+                  <div className="flex items-center justify-center w-14 h-14 rounded-full bg-slate-900 dark:bg-slate-850 text-white font-extrabold text-lg relative shadow-inner">
                     {v.composite_score}
-                    <div className="absolute inset-0.5 rounded-full border border-white/20"></div>
+                    <div className="absolute inset-0.5 rounded-full border border-white/10"></div>
                   </div>
                 </div>
               </div>
 
-              {/* Card Body */}
+              {/* Card Body Section */}
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Left side: breakdown bars */}
+                
+                {/* Signal Breakdown */}
                 <div className="space-y-3.5">
-                  <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">Signal Breakdown</h4>
+                  <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2">Signal Breakdown</h4>
                   {Object.entries(FACTOR_LABELS).map(([key, label]) => {
                     const value = breakdown[key] || 0.0;
                     const maxVal = key === 'watchlist_hit' ? 25 : key === 'betweenness' ? 15 : 20;
                     const pct = Math.min(100, (value / maxVal) * 100);
                     return (
-                      <div key={key} className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-medium">
-                          <span className="text-slate-600">{label}</span>
-                          <span className="text-slate-900 font-semibold">{value} pts</span>
+                      <div key={key} className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-semibold">
+                          <span className="text-slate-600 dark:text-slate-400">{label}</span>
+                          <span className="text-slate-900 dark:text-slate-200">{value} pts</span>
                         </div>
-                        <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                        <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
                           <div
                             className={`${FACTOR_COLORS[key]} h-full rounded-full transition-all duration-500`}
                             style={{ width: `${pct}%` }}
-                          ></div>
+                          />
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {/* Right side: LLM audit review */}
-                <div className="flex flex-col justify-between border-l border-slate-100 pl-0 md:pl-6">
+                {/* LLM Audit panel */}
+                <div className="flex flex-col justify-between border-t md:border-t-0 md:border-l border-borderLight dark:border-borderDark pt-6 md:pt-0 pl-0 md:pl-6">
                   <div>
-                    <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-3 flex items-center justify-between">
+                    <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3 flex items-center justify-between">
                       <span>Blind AI Second Opinion</span>
                       {isLlmReviewed && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                          v.llm_verdict === 'SUSPICIOUS' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'
+                        <span className={`text-[9px] px-2.5 py-1 rounded-full border font-bold uppercase ${
+                          v.llm_verdict === 'SUSPICIOUS' 
+                            ? 'bg-danger/10 text-danger border-danger/20 dark:bg-danger/5' 
+                            : 'bg-success/10 text-success border-success/20 dark:bg-success/5'
                         }`}>
                           {v.llm_verdict} (Conf: {v.llm_confidence})
                         </span>
@@ -165,61 +172,57 @@ export default function VerdictsPanel({ caseId }) {
                     </h4>
 
                     {isLlmReviewed ? (
-                      <div className="bg-slate-50 border border-slate-150 rounded-lg p-3 text-xs text-slate-600 leading-relaxed italic">
+                      <div className="bg-slate-50 dark:bg-slate-900 border border-borderLight dark:border-borderDark rounded-xl p-4 text-slate-600 dark:text-slate-400 leading-relaxed font-semibold italic">
                         "{v.llm_reasoning}"
                       </div>
                     ) : (
-                      <div className="bg-slate-50/50 border border-dashed border-slate-200 rounded-lg p-4 text-center">
-                        <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                      <div className="bg-slate-50/50 dark:bg-slate-900/20 border border-dashed border-borderLight dark:border-borderDark rounded-xl p-5 text-center">
+                        <p className="text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
                           This account fell outside the automatic audit pool limit (RULE 17). Click below to perform an on-demand audit.
                         </p>
                         <button
                           disabled={runningOpinion[v.account_id]}
                           onClick={() => triggerSecondOpinion(v.account_id)}
-                          className="text-xs bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium px-4 py-2 rounded-md transition inline-flex items-center"
+                          className="bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 text-white font-bold px-4 py-2.5 rounded-btn transition inline-flex items-center gap-1.5 shadow-sm"
                         >
-                          {runningOpinion[v.account_id] ? (
-                            <>
-                              <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                              </svg>
-                              Running Blind Audit...
-                            </>
-                          ) : (
-                            'Trigger Blind AI Audit'
+                          {runningOpinion[v.account_id] && (
+                            <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
                           )}
+                          <span>{runningOpinion[v.account_id] ? 'Running Blind Audit...' : 'Trigger Blind AI Audit'}</span>
                         </button>
                       </div>
                     )}
                   </div>
 
                   {isLlmReviewed && (
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-[10px] text-slate-400">
+                    <div className="mt-4 pt-3.5 border-t border-borderLight dark:border-borderDark flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 font-medium">
                         Audited: {v.reviewed_at ? new Date(v.reviewed_at).toLocaleString() : '—'}
                       </span>
                       <button
                         disabled={runningOpinion[v.account_id]}
                         onClick={() => triggerSecondOpinion(v.account_id)}
-                        className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold transition"
+                        className="text-[11px] text-accent hover:text-accent-hover font-bold transition"
                       >
                         {runningOpinion[v.account_id] ? 'Auditing...' : 'Re-run AI Audit'}
                       </button>
                     </div>
                   )}
                 </div>
+
               </div>
+
             </div>
           );
         })}
 
         {verdicts.length === 0 && (
-          <div className="text-center py-12 border border-dashed border-slate-200 rounded-lg bg-slate-50">
-            <span className="text-xs text-slate-400">No account verdicts available. Please trigger an analysis first.</span>
+          <div className="text-center py-12 border border-dashed border-borderLight dark:border-borderDark rounded-enterprise bg-slate-50/50 dark:bg-slate-900/10">
+            <span className="text-slate-400">No account verdicts available. Please execute pipeline from the Overview tab.</span>
           </div>
         )}
       </div>
+
     </div>
   );
 }
