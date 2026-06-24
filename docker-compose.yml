@@ -87,9 +87,17 @@ services:
       - uploads:/data/uploads
       - reports:/data/reports
       - ./models:/app/models:ro
+      - hf_cache:/data/huggingface
     networks:
       - internal
       - external
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -124,8 +132,16 @@ services:
       - uploads:/data/uploads
       - reports:/data/reports
       - ./models:/app/models:ro
+      - hf_cache:/data/huggingface
     networks:
       - internal
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     security_opt:
       - no-new-privileges:true
 
@@ -160,6 +176,7 @@ volumes:
   redis_data:
   uploads:
   reports:
+  hf_cache:
 
 networks:
   internal:

@@ -16,11 +16,13 @@ COPY backend/ .
 COPY scripts/ ./scripts/
 
 
+ENV HF_HOME=/data/huggingface
+
 COPY backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-RUN mkdir -p /data/uploads /data/reports
-RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports
+RUN mkdir -p /data/uploads /data/reports /data/huggingface
+RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports /data/huggingface
 USER finflow
 
 ENTRYPOINT ["/entrypoint.sh"]

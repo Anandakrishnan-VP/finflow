@@ -11,7 +11,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ .
 COPY scripts/ ./scripts/
 
-RUN mkdir -p /data/uploads /data/reports
-RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports
+ENV HF_HOME=/data/huggingface
+
+RUN mkdir -p /data/uploads /data/reports /data/huggingface
+RUN useradd -m -u 1000 finflow && chown -R finflow:finflow /app /data /data/uploads /data/reports /data/huggingface
 USER finflow
 CMD ["celery", "-A", "celery_app", "worker", "--loglevel=info", "--concurrency=2"]

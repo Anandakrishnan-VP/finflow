@@ -3,6 +3,14 @@ OCR fallback parser for scanned bank statement PDFs and images.
 Uses Tesseract via the sandboxed subprocess wrapper.
 Provides advanced image preprocessing (deskew, denoise, binarize, contrast enhancement).
 """
+import importlib.metadata
+original_version = importlib.metadata.version
+def patched_version(pkg_name):
+    if pkg_name == 'torch':
+        return '2.12.1'
+    return original_version(pkg_name)
+importlib.metadata.version = patched_version
+
 import logging
 import re
 import tempfile
@@ -17,6 +25,27 @@ from security.sandbox import run_sandboxed_tesseract
 
 logger = logging.getLogger(__name__)
 OCR_CONFIDENCE_THRESHOLD = 0.70  # Rows below this → human_review_queue
+
+# Patch SuryaOCRConfig to avoid KeyError with newer transformers versions
+try:
+    from surya.model.recognition.config import SuryaOCRConfig
+    original_init = SuryaOCRConfig.__init__
+    def patched_init(self, *args, **kwargs):
+        if "encoder" not in kwargs and "decoder" not in kwargs:
+            from transformers import PretrainedConfig
+            super(SuryaOCRConfig, self).__init__(**kwargs)
+            self.encoder = None
+            self.decoder = None
+            self.is_encoder_decoder = True
+            self.decoder_start_token_id = None
+            self.pad_token_id = None
+            self.eos_token_id = None
+        else:
+            original_init(self, *args, **kwargs)
+    SuryaOCRConfig.__init__ = patched_init
+    SuryaOCRConfig.get_text_config = lambda self, *args, **kwargs: self.decoder
+except Exception as e:
+    logger.warning("Failed to apply SuryaOCRConfig patch: %s", e)
 
 def is_pdf_scanned(file_path: str) -> bool:
     """
@@ -99,9 +128,200 @@ def preprocess_image(input_path: str, output_path: str) -> bool:
         logger.warning("Image pre-processing failed: %s. Using original image.", e)
         return False
 
+async def run_surya_ocr(image_path: str, langs: list[str] = ["en"]) -> tuple[list[dict], float]:
+    import gc
+    import torch
+    from PIL import Image
+    
+    from surya.model.detection.model import load_model as load_det_model, load_processor as load_det_processor
+    from surya.model.recognition.model import load_model as load_ocr_model
+    from surya.model.recognition.processor import load_processor as load_rec_processor
+    from surya.detection import batch_text_detection
+    from surya.recognition import batch_recognition
+    from surya.input.processing import slice_polys_from_image
+    from surya.postprocessing.text import sort_text_lines
+    from surya.schema import TextLine
+
+    img = Image.open(image_path).convert("RGB")
+
+    # Determine device and batch size
+    device = "cuda"
+    dtype = torch.float16
+    rec_batch_size = 8
+
+    # 1. Detection Phase (load model, detect, unload)
+    try:
+        logger.info(f"Loading Surya detection model on {device}...")
+        det_model = load_det_model(device=device, dtype=dtype)
+        det_processor = load_det_processor()
+        
+        logger.info("Running text detection...")
+        det_predictions = batch_text_detection([img], det_model, det_processor)
+        
+        # Free detection model from GPU memory
+        del det_model
+        del det_processor
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
+    except Exception as e:
+        if device == "cuda" and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
+            logger.warning("CUDA OOM or error during detection. Falling back to CPU.")
+            device = "cpu"
+            dtype = torch.float32
+            
+            # Clean up and try again on CPU
+            gc.collect()
+            torch.cuda.empty_cache()
+            
+            logger.info("Loading Surya detection model on CPU...")
+            det_model = load_det_model(device="cpu", dtype=torch.float32)
+            det_processor = load_det_processor()
+            
+            logger.info("Running text detection on CPU...")
+            det_predictions = batch_text_detection([img], det_model, det_processor)
+            
+            del det_model
+            del det_processor
+            gc.collect()
+        else:
+            raise e
+
+    if not det_predictions:
+        return [], 0.0
+
+    det_pred = det_predictions[0]
+    polygons = [p.polygon for p in det_pred.bboxes]
+    slices = slice_polys_from_image(img, polygons)
+
+    # 2. Recognition Phase (load model, recognize, unload)
+    try:
+        logger.info(f"Loading Surya recognition model on {device}...")
+        rec_model = load_ocr_model(device=device, dtype=dtype)
+        rec_processor = load_rec_processor()
+
+        logger.info(f"Running text recognition (batch_size={rec_batch_size})...")
+        rec_predictions, confidence_scores = batch_recognition(slices, [langs] * len(slices), rec_model, rec_processor, batch_size=rec_batch_size)
+
+        # Free recognition model from GPU memory
+        del rec_model
+        del rec_processor
+        gc.collect()
+        if device == "cuda":
+            torch.cuda.empty_cache()
+    except Exception as e:
+        if device == "cuda" and ("out of memory" in str(e).lower() or "cuda" in str(e).lower()):
+            logger.warning("CUDA OOM or error during recognition. Falling back to CPU.")
+            device = "cpu"
+            dtype = torch.float32
+            rec_batch_size = None  # Use default for CPU
+            
+            # Clean up and try again on CPU
+            gc.collect()
+            torch.cuda.empty_cache()
+            
+            logger.info("Loading Surya recognition model on CPU...")
+            rec_model = load_ocr_model(device="cpu", dtype=torch.float32)
+            rec_processor = load_rec_processor()
+            
+            logger.info("Running text recognition on CPU...")
+            rec_predictions, confidence_scores = batch_recognition(slices, [langs] * len(slices), rec_model, rec_processor, batch_size=rec_batch_size)
+            
+            del rec_model
+            del rec_processor
+            gc.collect()
+        else:
+            raise e
+
+    # Reconstruct TextLines
+    lines = []
+    for text_line, confidence, bbox in zip(rec_predictions, confidence_scores, det_pred.bboxes):
+        lines.append(TextLine(
+            text=text_line,
+            polygon=bbox.polygon,
+            bbox=bbox.bbox,
+            confidence=confidence
+        ))
+
+    lines = sort_text_lines(lines)
+
+    # Convert to words dictionary format for the rest of the parsing pipeline
+    words = []
+    total_conf = 0.0
+    conf_count = 0
+
+    for line in lines:
+        x1, y1, x2, y2 = line.bbox
+        left = int(x1)
+        top = int(y1)
+        width = int(x2 - x1)
+        height = int(y2 - y1)
+        line_text = line.text
+        confidence = getattr(line, "confidence", 1.0)
+
+        line_words = line_text.split()
+        if not line_words:
+            continue
+
+        num_chars = sum(len(w) for w in line_words)
+        if num_chars == 0:
+            continue
+            
+        current_x = left
+        char_width = width / (num_chars + len(line_words) - 1) if (num_chars + len(line_words) - 1) > 0 else width
+        
+        for word in line_words:
+            w_len = len(word)
+            w_width = w_len * char_width
+            w_left = int(current_x)
+            w_top = int(top)
+            w_w = int(w_width)
+            w_h = int(height)
+            
+            words.append({
+                "left": w_left,
+                "top": w_top,
+                "width": w_w,
+                "height": w_h,
+                "text": word
+            })
+            current_x += w_width + char_width
+            
+        if confidence is not None:
+            total_conf += confidence
+            conf_count += 1
+            
+    avg_confidence = (total_conf / conf_count) if conf_count > 0 else 1.0
+    return words, avg_confidence
+
+async def parse_page_ocr(img_to_ocr: str, bank_name: str, file_hash: str, column_mapping: dict = None) -> list[UniversalTransaction]:
+    try:
+        import surya
+        words, avg_confidence = await run_surya_ocr(img_to_ocr)
+        table = reconstruct_table_from_words(words)
+        if not table:
+            return []
+        if not column_mapping:
+            table = expand_collapsed_rows(table)
+            if not table:
+                return []
+        from parsers.generic_parser import parse_generic_table
+        txns = parse_generic_table(table, bank_name, file_hash, column_mapping=column_mapping)
+        for t in txns:
+            t.ocr_confidence = avg_confidence
+            if avg_confidence < OCR_CONFIDENCE_THRESHOLD:
+                t.flags.append(TransactionFlag.LOW_OCR_CONFIDENCE)
+        return txns
+    except Exception as e:
+        logger.exception("Surya OCR failed, falling back to Tesseract: %s", e)
+        tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
+        if not tsv_text:
+            return []
+        return _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
+
 async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = None, column_mapping: dict = None) -> list[UniversalTransaction]:
     """
-    Convert each PDF page to image, run advanced preprocessing, run Tesseract, and parse TSV output.
+    Convert each PDF page to image, run advanced preprocessing, run Surya OCR, and parse table.
     If column_mapping is provided (from manual UI mapping), it is passed to the generic table parser.
     """
     import fitz  # PyMuPDF
@@ -111,12 +331,10 @@ async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = 
     total_pages = len(doc)
 
     for page_num, page in enumerate(doc):
-        # Report page progress
         if progress_callback:
             pct = int(85 + (15 * (page_num + 1) / total_pages))
             await progress_callback(pct, f"OCR processing page {page_num + 1} of {total_pages}...")
             
-        # Render page at 300 DPI
         mat = fitz.Matrix(300/72, 300/72)
         pix = page.get_pixmap(matrix=mat)
         
@@ -127,17 +345,11 @@ async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = 
             success = preprocess_image(tmp_raw.name, tmp_proc.name)
             img_to_ocr = tmp_proc.name if success else tmp_raw.name
             
-        tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
+        page_txns = await parse_page_ocr(img_to_ocr, bank_name, file_hash, column_mapping=column_mapping)
+        txns.extend(page_txns)
         
-        # Cleanup temp files
         Path(tmp_raw.name).unlink(missing_ok=True)
         Path(tmp_proc.name).unlink(missing_ok=True)
-
-        if not tsv_text:
-            continue
-
-        page_txns = _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
-        txns.extend(page_txns)
 
     doc.close()
     return txns
@@ -145,7 +357,7 @@ async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = 
 
 async def parse_image_file(file_path: str, bank_name: str, column_mapping: dict = None) -> list[UniversalTransaction]:
     """
-    Run Tesseract OCR directly on image files with preprocessing.
+    Run Surya OCR directly on image files with preprocessing.
     If column_mapping is provided, it is passed to the generic table parser.
     """
     file_hash = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
@@ -154,12 +366,9 @@ async def parse_image_file(file_path: str, bank_name: str, column_mapping: dict 
         success = preprocess_image(file_path, tmp_proc.name)
         img_to_ocr = tmp_proc.name if success else file_path
         
-    tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
+    txns = await parse_page_ocr(img_to_ocr, bank_name, file_hash, column_mapping=column_mapping)
     Path(tmp_proc.name).unlink(missing_ok=True)
-    
-    if not tsv_text:
-        return []
-    return _parse_tsv(tsv_text, bank_name, file_hash, column_mapping=column_mapping)
+    return txns
 
 def group_words_into_rows(words: list) -> list[list[dict]]:
     """
@@ -230,14 +439,47 @@ def detect_column_boundaries(words: list) -> list[int]:
     return boundaries
 
 
-def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
+def reconstruct_table_from_words(words: list[dict]) -> list[list[str]]:
     """
-    Reconstruct tabular rows from Tesseract TSV output using:
+    Reconstruct tabular rows from grouped words with bounding boxes:
       1. Vertical clustering → groups words into rows.
       2. Histogram-based column boundary detection → finds column separators
-         from x-axis occupancy valleys across the ENTIRE page (not just
-         adjacent word gaps). This correctly identifies 5–7 columns in
-         bank statement PDFs where adjacent column gaps are narrow.
+         from x-axis occupancy valleys across the ENTIRE page.
+    """
+    if not words:
+        return []
+
+    # Step 1: Group words into rows
+    rows = group_words_into_rows(words)
+
+    # Step 2: Detect column boundaries from ALL words across the page
+    col_boundaries = detect_column_boundaries(words)
+    num_cols = max(1, len(col_boundaries) - 1)
+
+    # Step 3: Assign each word to a column slot, build table rows
+    table = []
+    for row in rows:
+        col_slots: list[list[str]] = [[] for _ in range(num_cols)]
+        for w in row:
+            # Find which column interval this word's left-edge falls into
+            col_idx = num_cols - 1
+            for i in range(len(col_boundaries) - 1):
+                if col_boundaries[i] <= w["left"] < col_boundaries[i + 1]:
+                    col_idx = i
+                    break
+            col_slots[min(col_idx, num_cols - 1)].append(w["text"])
+
+        cells = [" ".join(slot) for slot in col_slots]
+        # Keep all columns to preserve rectangular structure for downstream parsing
+        if any(c.strip() for c in cells):
+            table.append(cells)
+
+    return table
+
+
+def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
+    """
+    Reconstruct tabular rows from Tesseract TSV output.
     """
     lines = tsv_text.strip().split("\n")
     if len(lines) < 2:
@@ -270,35 +512,7 @@ def reconstruct_table_from_tsv(tsv_text: str) -> list[list[str]]:
         except (ValueError, IndexError):
             continue
 
-    if not words:
-        return []
-
-    # Step 1: Group words into rows
-    rows = group_words_into_rows(words)
-
-    # Step 2: Detect column boundaries from ALL words across the page
-    col_boundaries = detect_column_boundaries(words)
-    num_cols = max(1, len(col_boundaries) - 1)
-
-    # Step 3: Assign each word to a column slot, build table rows
-    table = []
-    for row in rows:
-        col_slots: list[list[str]] = [[] for _ in range(num_cols)]
-        for w in row:
-            # Find which column interval this word's left-edge falls into
-            col_idx = num_cols - 1
-            for i in range(len(col_boundaries) - 1):
-                if col_boundaries[i] <= w["left"] < col_boundaries[i + 1]:
-                    col_idx = i
-                    break
-            col_slots[min(col_idx, num_cols - 1)].append(w["text"])
-
-        cells = [" ".join(slot) for slot in col_slots]
-        # Keep all columns to preserve rectangular structure for downstream parsing
-        if any(c.strip() for c in cells):
-            table.append(cells)
-
-    return table
+    return reconstruct_table_from_words(words)
 
 
 # Date pattern: matches "2 Jan 2013", "04-01-2013", "2013-01-04", "04/01/2013" etc.
