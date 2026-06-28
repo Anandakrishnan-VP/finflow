@@ -93,7 +93,8 @@ async def nl_query(case_id: str, req: NLQueryRequest,
     where_clause = " AND ".join(where_parts)
     result = await db.execute(
         text(f"""SELECT t.txn_hash, t.account_id, t.txn_date, t.amount::text,
-                        t.txn_type, t.narration, t.counterparty_account
+                        t.txn_type, t.narration, t.counterparty_account,
+                        t.counterparty_name, t.counterparty_bank
                  FROM transactions t WHERE {where_clause}
                  ORDER BY t.txn_date LIMIT :limit"""),
         params

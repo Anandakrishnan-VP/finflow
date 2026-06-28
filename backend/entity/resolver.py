@@ -14,6 +14,13 @@ async def resolve_entities(db: AsyncSession, case_id: str, transactions: list) -
     entity_map = {}
     all_accounts = list({t.account_id for t in transactions if t.account_id})
     for account_id in all_accounts:
+        # Find the canonical name (account_holder) from transactions
+        canonical_name = "Unnamed Entity"
+        for t in transactions:
+            if t.account_id == account_id and t.account_holder:
+                canonical_name = t.account_holder
+                break
+
         # Check if entity already exists for this case
         result = await db.execute(
             text("SELECT id FROM entities WHERE linked_accounts @> CAST(:acc AS jsonb) AND first_seen_case = :cid"),
@@ -21,12 +28,20 @@ async def resolve_entities(db: AsyncSession, case_id: str, transactions: list) -
         )
         row = result.fetchone()
         if row:
-            entity_map[account_id] = str(row[0])
+            entity_id = str(row[0])
+            entity_map[account_id] = entity_id
+            # Backfill canonical_name if it is currently missing
+            await db.execute(
+                text("""UPDATE entities 
+                        SET canonical_name = :name 
+                        WHERE id = :eid AND (canonical_name IS NULL OR canonical_name = 'Unnamed Entity' OR canonical_name = '')"""),
+                {"name": canonical_name, "eid": entity_id}
+            )
         else:
             insert_result = await db.execute(
-                text("""INSERT INTO entities (linked_accounts, first_seen_case)
-                        VALUES (CAST(:acc AS jsonb), :cid) RETURNING id"""),
-                {"acc": json.dumps([account_id]), "cid": case_id}
+                text("""INSERT INTO entities (canonical_name, linked_accounts, first_seen_case)
+                        VALUES (:name, CAST(:acc AS jsonb), :cid) RETURNING id"""),
+                {"name": canonical_name, "acc": json.dumps([account_id]), "cid": case_id}
             )
             new_id = insert_result.fetchone()[0]
             entity_map[account_id] = str(new_id)

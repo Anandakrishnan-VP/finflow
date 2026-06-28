@@ -12,19 +12,9 @@ from schemas.uts import UniversalTransaction, TransactionType
 
 logger = logging.getLogger(__name__)
 BANK_NAME = "Axis Bank"
-DATE_FORMATS = ["%d-%m-%Y", "%d/%m/%Y", "%d %b %Y", "%d-%b-%Y", "%d/%m/%y"]
+from parsers.shared.amount_parser import parse_amount, resolve_txn_type
+from parsers.shared.date_parser import parse_date, is_skip_row
 
-def _pd(s):
-    for fmt in DATE_FORMATS:
-        try: return datetime.strptime(s.strip(), fmt)
-        except: pass
-    return None
-
-def _pa(s) -> Optional[Decimal]:
-    if not s or not s.strip(): return None
-    cleaned = re.sub(r"[₹,\s]", "", s)
-    try: return Decimal(cleaned)
-    except: return None
 
 def _is_header(cells):
     t = " ".join(c.lower() for c in cells)
@@ -33,22 +23,21 @@ def _is_header(cells):
 def _parse_row(cells, account_id, account_holder, file_path):
     try:
         if len(cells) < 5: return None
-        date = _pd(cells[0])
+        date = parse_date(cells[0])
         if not date: return None
         narration = cells[1]
+        if is_skip_row(cells[0], narration): return None
         # Axis: [Date, Particulars, Ref, Value Date, Withdrawal, Deposit, Balance]
         if len(cells) >= 7:
-            wd, dep, bal = _pa(cells[4]), _pa(cells[5]), _pa(cells[6])
+            wd, dep, bal = parse_amount(cells[4]), parse_amount(cells[5]), parse_amount(cells[6])
         elif len(cells) >= 5:
-            wd, dep, bal = _pa(cells[2]), _pa(cells[3]), _pa(cells[4])
+            wd, dep, bal = parse_amount(cells[2]), parse_amount(cells[3]), parse_amount(cells[4])
         else:
             return None
-        if wd and wd > 0:
-            amount, txn_type = wd, TransactionType.DEBIT
-        elif dep and dep > 0:
-            amount, txn_type = dep, TransactionType.CREDIT
-        else:
+        amount, txn_type_str = resolve_txn_type(wd, dep)
+        if amount is None:
             return None
+        txn_type = TransactionType.DEBIT if txn_type_str == 'DR' else TransactionType.CREDIT
         h = hashlib.sha256(f"{account_id}|{date.isoformat()}|{amount}|{narration}".encode()).hexdigest()
         return UniversalTransaction(
             txn_hash=h, case_id="", statement_id="",

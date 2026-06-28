@@ -83,7 +83,8 @@ async def list_statements(
     result = await db.execute(
         text("""SELECT id, original_filename AS filename, bank_name AS bank,
                        parse_status AS status, row_count AS rows_parsed, parse_error AS error,
-                       parse_progress AS progress, parse_stage AS stage, column_mapping
+                       parse_progress AS progress, parse_stage AS stage, column_mapping,
+                       uploaded_at, file_size_bytes AS file_size
                 FROM statements
                 WHERE case_id = :cid
                 ORDER BY uploaded_at DESC"""),

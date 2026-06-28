@@ -72,7 +72,7 @@ export default function GraphView({ caseId }) {
       data: {
         ...n.data,
         risk_tier: riskTier(n.data.composite_score || 0),
-        display_label: labeledIds.has(n.data.id) ? n.data.id : '',
+        display_label: labeledIds.has(n.data.id) ? (n.data.name || n.data.id) : '',
         role_badge: ROLE_BADGE[n.data.role_label] || '',
       },
     }));
@@ -149,7 +149,10 @@ export default function GraphView({ caseId }) {
     if (!cy) return;
     cy.elements().removeClass('highlighted');
     if (!search) return;
-    const matches = cy.nodes().filter((n) => n.data('id').toLowerCase().includes(search.toLowerCase()));
+    const matches = cy.nodes().filter((n) => 
+      n.data('id').toLowerCase().includes(search.toLowerCase()) ||
+      (n.data('name') && n.data('name').toLowerCase().includes(search.toLowerCase()))
+    );
     matches.addClass('highlighted');
     if (matches.length > 0) cy.center(matches);
   }, [search]);
@@ -170,7 +173,7 @@ export default function GraphView({ caseId }) {
           </button>
         </div>
 
-        <input placeholder="Search account..." value={search} onChange={(e) => setSearch(e.target.value)}
+        <input placeholder="Search account or name..." value={search} onChange={(e) => setSearch(e.target.value)}
                className="text-xs border border-slate-300 rounded px-2 py-1.5 w-44" />
 
         <div className="flex items-center gap-2">
@@ -193,32 +196,120 @@ export default function GraphView({ caseId }) {
       {view === 'network' ? (
         <div className="flex gap-4">
           <div ref={containerRef} className="flex-1 h-[560px] bg-white border border-slate-200 rounded-lg" />
-          <div className="w-64 bg-white border border-slate-200 rounded-lg p-4 text-sm">
-            <div className="font-medium text-slate-700 mb-2">Legend</div>
-            <div className="flex items-center gap-2 mb-1"><span className="w-3 h-3 rounded-full bg-blue-600" /> Low risk</div>
-            <div className="flex items-center gap-2 mb-1"><span className="w-3 h-3 bg-amber-600" style={{clipPath:'polygon(50% 0,100% 50%,50% 100%,0 50%)'}} /> Medium risk</div>
-            <div className="flex items-center gap-2 mb-3"><span className="w-3 h-3 bg-red-600" style={{clipPath:'polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)'}} /> High risk</div>
-            <div className="text-xs text-slate-400 mb-3">
-              Node size = transaction volume. Edge thickness = transferred amount.
-              Only the top {LABEL_BUDGET} accounts are labeled — double-click any
-              node to focus its neighborhood, click background to reset.
+          <div className="w-80 bg-white border border-slate-200 rounded-lg p-4 text-sm flex flex-col justify-between overflow-y-auto">
+            <div>
+              <div className="font-semibold text-slate-800 text-xs uppercase tracking-wider mb-3">Selected Details</div>
+              {selected ? (
+                <div className="space-y-4">
+                  {selected.type === 'node' ? (
+                    <>
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">Account Holder</div>
+                        <div className="font-bold text-slate-900 text-sm">{selected.data.name || 'Unknown Counterparty'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">Account Number</div>
+                        <div className="font-mono text-xs text-slate-700 break-all">{selected.data.account_id}</div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">Bank</div>
+                          <div className="text-xs text-slate-800 font-medium">{selected.data.bank || 'Unknown Bank'}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">Type</div>
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-semibold inline-block ${
+                            selected.data.is_primary ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-slate-50 text-slate-600 border border-slate-200'
+                          }`}>
+                            {selected.data.is_primary ? 'Primary Account' : 'Counterparty'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">Risk Score</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className={`w-2 h-2 rounded-full ${
+                              selected.data.risk_tier === 'high' ? 'bg-red-600' : selected.data.risk_tier === 'medium' ? 'bg-amber-600' : 'bg-blue-600'
+                            }`} />
+                            <span className="font-bold text-slate-800 text-xs">{(selected.data.composite_score || 0).toFixed(0)}/100</span>
+                          </div>
+                        </div>
+                        {selected.data.role_label && (
+                          <div>
+                            <div className="text-[10px] text-slate-400 uppercase font-semibold">Inferred Role</div>
+                            <span className="text-[10px] bg-rose-50 text-rose-700 font-bold border border-rose-100 rounded px-1.5 py-0.5 mt-0.5 inline-block">
+                              {selected.data.role_label.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">Transacted Volume</div>
+                          <div className="text-xs font-bold text-slate-800 mt-0.5">
+                            ₹{Number(selected.data.volume || 0).toLocaleString('en-IN')}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">Direct Links</div>
+                          <div className="text-xs font-semibold text-slate-800 mt-0.5">
+                            {selected.data.degree} connections
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">Flow direction</div>
+                        <div className="font-bold text-slate-800 text-xs flex items-center gap-1 mt-0.5">
+                          <span className="font-mono text-[10px] text-slate-500 truncate max-w-[90px]" title={selected.data.source}>{selected.data.source}</span>
+                          <span>➡️</span>
+                          <span className="font-mono text-[10px] text-slate-500 truncate max-w-[90px]" title={selected.data.target}>{selected.data.target}</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">Total Amount</div>
+                          <div className="text-sm font-bold text-slate-900 mt-0.5">
+                            ₹{Number(selected.data.total_amount).toLocaleString('en-IN')}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold">TX Count</div>
+                          <div className="text-xs font-bold text-slate-800 mt-0.5">
+                            {selected.data.txn_count} transaction(s)
+                          </div>
+                        </div>
+                      </div>
+                      {selected.data.sample_narrations && selected.data.sample_narrations.length > 0 && (
+                        <div>
+                          <div className="text-[10px] text-slate-400 uppercase font-semibold mb-1">Sample Narrations</div>
+                          <ul className="space-y-1">
+                            {selected.data.sample_narrations.map((nar, idx) => (
+                              <li key={idx} className="text-[10px] bg-slate-50 border border-slate-100 rounded p-1 text-slate-600 break-words font-mono">
+                                {nar}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="text-slate-400 text-xs italic py-8 text-center border border-dashed border-slate-200 rounded-lg">
+                  Click a node or edge for details.
+                </div>
+              )}
             </div>
-            {selected ? (
-              <div>
-                <div className="font-medium text-slate-700 mb-1">{selected.type === 'node' ? 'Account' : 'Relationship'}</div>
-                {selected.type === 'node' && selected.data.role_label && (
-                  <div className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded inline-block mb-2">
-                    {selected.data.role_label.replace(/_/g, ' ')}
-                  </div>
-                )}
-                {selected.type === 'edge' && (
-                  <div className="text-xs text-slate-500 mb-2">
-                    {selected.data.txn_count} transaction(s) · ₹{Number(selected.data.total_amount).toLocaleString('en-IN')} total
-                  </div>
-                )}
-                <pre className="text-xs text-slate-500 whitespace-pre-wrap">{JSON.stringify(selected.data, null, 2)}</pre>
-              </div>
-            ) : <div className="text-slate-400 text-xs">Click a node or edge for details.</div>}
+            <div className="mt-6 border-t border-slate-100 pt-4">
+              <div className="font-semibold text-slate-700 text-[10px] uppercase tracking-wider mb-2">Graph Legend</div>
+              <div className="flex items-center gap-2 mb-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-600" /> <span className="text-xs text-slate-500">Low risk (Regular)</span></div>
+              <div className="flex items-center gap-2 mb-1.5"><span className="w-2.5 h-2.5 bg-amber-600" style={{clipPath:'polygon(50% 0,100% 50%,50% 100%,0 50%)'}} /> <span className="text-xs text-slate-500">Medium risk</span></div>
+              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 bg-red-600" style={{clipPath:'polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)'}} /> <span className="text-xs text-slate-500">High risk (Alert)</span></div>
+            </div>
           </div>
         </div>
       ) : (

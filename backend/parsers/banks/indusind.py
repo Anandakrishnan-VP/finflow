@@ -1,7 +1,6 @@
 """
-YES Bank statement parser.
+IndusInd Bank statement parser.
 CRITICAL: All monetary values = Decimal. Never float (RULE 1).
-Skip "B/F ..." opening balance rows — they are metadata, not transactions.
 """
 import hashlib
 import logging
@@ -16,7 +15,7 @@ from parsers.shared.amount_parser import parse_amount, resolve_txn_type
 from parsers.shared.date_parser import parse_date, is_skip_row
 
 logger = logging.getLogger(__name__)
-BANK_NAME = "YES Bank"
+BANK_NAME = "IndusInd Bank"
 
 
 def _make_hash(account_id: str, date: datetime, amount: Decimal, narration: str) -> str:
@@ -27,46 +26,29 @@ def _make_hash(account_id: str, date: datetime, amount: Decimal, narration: str)
 
 def _is_header(cells: list[str]) -> bool:
     combined = " ".join(c.lower() for c in cells)
-    keywords = {"txn", "date", "description", "reference", "debits", "credits", "balance"}
+    keywords = {"tran", "date", "particular", "debit", "credit", "balance", "amount"}
     return sum(1 for kw in keywords if kw in combined) >= 3
-
-
-def _extract_account_info(text: str) -> tuple[str, str]:
-    account_id, account_holder = "", ""
-    m = re.search(r"A/C\s*Number\s*[:\-]?\s*(\d{9,20})", text, re.IGNORECASE)
-    if m:
-        account_id = m.group(1).strip()
-    m = re.search(r"^(M/S\.?\s+[A-Z][A-Z ]+|[A-Z]{3,}\s+[A-Z]{3,}(?:\s+[A-Z]{3,})?)\n",
-                  text, re.MULTILINE)
-    if m:
-        account_holder = m.group(1).strip()
-    return account_id, account_holder
 
 
 def _parse_row(cells: list[str], account_id: str,
                account_holder: str, file_hash: str) -> Optional[UniversalTransaction]:
     try:
-        if len(cells) < 5:
+        if len(cells) < 3:
             return None
-        # YES Bank: [TXN DATE, VALUE DATE, DESCRIPTION, REFERENCE, DEBITS, CREDITS, BALANCE]
-        if len(cells) >= 7:
-            date_str, narration = cells[0].strip(), cells[2].strip()
-            debit_raw, credit_raw, balance_raw = cells[4].strip(), cells[5].strip(), cells[6].strip()
-        elif len(cells) == 6:
-            date_str, narration = cells[0].strip(), cells[2].strip()
-            debit_raw, credit_raw, balance_raw = cells[3].strip(), cells[4].strip(), cells[5].strip()
-        elif len(cells) == 5:
+        # IndusInd columns: [TRAN DATE, TRAN PARTICULAR, DEBIT AMOUNT, CREDIT AMOUNT, BALANCE AMOUNT]
+        # or 3-column minimal: [Date, Description, Balance]
+        if len(cells) >= 5:
             date_str, narration = cells[0].strip(), cells[1].strip()
             debit_raw, credit_raw, balance_raw = cells[2].strip(), cells[3].strip(), cells[4].strip()
+        elif len(cells) == 4:
+            date_str, narration = cells[0].strip(), cells[1].strip()
+            debit_raw, credit_raw, balance_raw = cells[2].strip(), "", cells[3].strip()
         else:
             return None
 
         date = parse_date(date_str)
         if not date:
             return None
-
-        # YES Bank B/F rows must be skipped — they have a valid date but are
-        # the opening balance marker, not a real transaction
         if is_skip_row(date_str, narration):
             return None
 
@@ -88,17 +70,30 @@ def _parse_row(cells: list[str], account_id: str,
             balance_after=balance, narration=narration,
         )
     except Exception as e:
-        logger.debug("YES Bank row error: %s | cells: %s", e, cells)
+        logger.debug("IndusInd row error: %s | cells: %s", e, cells)
         return None
+
+
+def _extract_account_info(text: str) -> tuple[str, str]:
+    account_id, account_holder = "", ""
+    m = re.search(r"Account\s*(?:No|Number|No\.)\s*[:\-]?\s*(\d{9,20})", text, re.IGNORECASE)
+    if m:
+        account_id = m.group(1).strip()
+    m = re.search(r"(?:Account\s*(?:Holder|Name)|Customer\s*Name)\s*[:\-]\s*([A-Z][A-Z \.]+)", text, re.IGNORECASE)
+    if m:
+        account_holder = m.group(1).strip()
+    return account_id, account_holder
 
 
 async def parse_pdf(file_path: str) -> tuple[list, list]:
     file_hash = hashlib.sha256(open(file_path, "rb").read()).hexdigest()
 
+    # Try camelot lattice first (IndusInd PDFs have cell borders)
     try:
         import camelot
         tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
-        txns, account_id, account_holder = [], "", ""
+        txns = []
+        account_id, account_holder = "", ""
         for table in tables:
             for _, row in table.df.iterrows():
                 cells = [str(c).strip() for c in row]
@@ -108,11 +103,12 @@ async def parse_pdf(file_path: str) -> tuple[list, list]:
                 if txn:
                     txns.append(txn)
         if len(txns) >= 3:
-            logger.info("YES Bank: camelot extracted %d transactions", len(txns))
+            logger.info("IndusInd: camelot extracted %d transactions", len(txns))
             return txns, []
     except Exception as e:
-        logger.debug("YES Bank camelot failed: %s", e)
+        logger.debug("IndusInd camelot failed: %s", e)
 
+    # pdfplumber with position reconstruction
     try:
         from parsers.table_reconstruction import detect_column_bands, reconstruct_rows
         txns, account_id, account_holder = [], "", ""
@@ -127,18 +123,18 @@ async def parse_pdf(file_path: str) -> tuple[list, list]:
                 bands = detect_column_bands(words_dicts, page.width)
                 rows = reconstruct_rows(words_dicts, bands)
                 for row in rows:
-                    cells = [row.get("date",""), row.get("value_date",""),
-                             row.get("description",""), row.get("ref_no",""),
+                    cells = [row.get("date",""), row.get("description",""),
                              row.get("debit",""), row.get("credit",""), row.get("balance","")]
                     txn = _parse_row(cells, account_id, account_holder, file_hash)
                     if txn:
                         txns.append(txn)
         if len(txns) >= 3:
-            logger.info("YES Bank: position reconstruction extracted %d transactions", len(txns))
+            logger.info("IndusInd: position reconstruction extracted %d transactions", len(txns))
             return txns, []
     except Exception as e:
-        logger.debug("YES Bank pdfplumber failed: %s", e)
+        logger.debug("IndusInd pdfplumber failed: %s", e)
 
+    logger.info("IndusInd: falling back to OCR")
     from parsers.pdf_scanned import parse_scanned_pdf
     return await parse_scanned_pdf(file_path, BANK_NAME)
 

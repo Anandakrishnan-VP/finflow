@@ -187,11 +187,20 @@ async def get_cytoscape_data(
         node_result = await session.run("""
             MATCH (a:Account {case_id: $cid})
             OPTIONAL MATCH (a)-[r:SENT]-()
-            RETURN a.account_id AS account_id, count(r) AS degree
+            RETURN a.account_id AS account_id,
+                   a.name AS name,
+                   a.bank AS bank,
+                   a.is_primary AS is_primary,
+                   count(r) AS degree
         """, cid=case_id)
-        degree_map = {}
+        account_meta_map = {}
         async for record in node_result:
-            degree_map[record["account_id"]] = record["degree"]
+            account_meta_map[record["account_id"]] = {
+                "name": record["name"] or "Unknown Counterparty",
+                "bank": record["bank"] or "Unknown Bank",
+                "is_primary": bool(record["is_primary"]) if record["is_primary"] is not None else False,
+                "degree": record["degree"]
+            }
 
     # Step 3: verdict enrichment from Postgres — this is the missing wiring
     verdict_result = await db.execute(
@@ -216,7 +225,7 @@ async def get_cytoscape_data(
         volume_map[e["target"]] = volume_map.get(e["target"], 0) + e["total_amount"]
 
     # Step 5: rank all accounts, cap to node_limit (RULE 30)
-    all_account_ids = set(degree_map.keys()) | set(volume_map.keys())
+    all_account_ids = set(account_meta_map.keys()) | set(volume_map.keys())
     ranked = sorted(
         all_account_ids,
         key=lambda aid: (
@@ -231,10 +240,14 @@ async def get_cytoscape_data(
     nodes = []
     for aid in kept_ids:
         v = verdict_map.get(aid, {})
+        meta = account_meta_map.get(aid, {"name": "Unknown Counterparty", "bank": "Unknown Bank", "is_primary": False, "degree": 0})
         nodes.append({"data": {
             "id": aid,
             "account_id": aid,
-            "degree": degree_map.get(aid, 0),
+            "name": meta["name"],
+            "bank": meta["bank"],
+            "is_primary": meta["is_primary"],
+            "degree": meta.get("degree", 0),
             "volume": volume_map.get(aid, 0),
             "composite_score": v.get("composite_score", 0),
             "role_label": v.get("role_label"),

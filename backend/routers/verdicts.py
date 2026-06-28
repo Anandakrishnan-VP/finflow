@@ -97,7 +97,7 @@ async def trigger_second_opinion(
         text("""
             SELECT id, txn_hash, statement_id, account_id, account_holder,
                    bank_name, txn_date, amount, txn_type, balance_after, narration,
-                   counterparty_account, counterparty_name
+                   counterparty_account, counterparty_name, counterparty_bank
             FROM transactions
             WHERE case_id = :cid AND account_id = :aid
             ORDER BY txn_date ASC
@@ -126,6 +126,7 @@ async def trigger_second_opinion(
             narration=r.narration or "",
             counterparty_account=r.counterparty_account,
             counterparty_name=r.counterparty_name,
+            counterparty_bank=r.counterparty_bank,
         ))
 
     # 3. Call LLM for second opinion

@@ -93,10 +93,11 @@ async def _run_analysis_pipeline_core(task_self, case_id: str, task_id: str, Ses
             {
                 "cacc": t.counterparty_account,
                 "cname": t.counterparty_name,
+                "cbank": t.counterparty_bank,
                 "hash": t.txn_hash
             }
             for t in transactions
-            if t.counterparty_account or t.counterparty_name
+            if t.counterparty_account or t.counterparty_name or t.counterparty_bank
         ]
         chunk_size = 10000
         for i in range(0, len(update_data), chunk_size):
@@ -104,7 +105,7 @@ async def _run_analysis_pipeline_core(task_self, case_id: str, task_id: str, Ses
             await db.execute(
                 text("""
                     UPDATE transactions 
-                    SET counterparty_account = :cacc, counterparty_name = :cname
+                    SET counterparty_account = :cacc, counterparty_name = :cname, counterparty_bank = :cbank
                     WHERE txn_hash = :hash
                 """),
                 chunk
@@ -332,6 +333,7 @@ async def _load_transactions(db, case_id: str) -> list:
                 narration=row.narration or "",
                 counterparty_account=row.counterparty_account,
                 counterparty_name=row.counterparty_name,
+                counterparty_bank=row.counterparty_bank,
             ))
         except Exception as e:
             logger.debug("Row load error: %s", e)
@@ -669,6 +671,7 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
                     "nar": txn.narration,
                     "cp": txn.counterparty_account,
                     "cpn": txn.counterparty_name,
+                    "cpb": txn.counterparty_bank,
                     "ch": chain_hash
                 })
 
@@ -680,8 +683,8 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
                         text("""INSERT INTO transactions
                              (txn_hash, case_id, statement_id, account_id, account_holder, bank_name,
                               txn_date, amount, txn_type, balance_after, narration,
-                              counterparty_account, counterparty_name, chain_hash)
-                              VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn,:ch)
+                              counterparty_account, counterparty_name, counterparty_bank, chain_hash)
+                              VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn,:cpb,:ch)
                               ON CONFLICT (txn_hash) DO NOTHING"""),
                         chunk
                     )

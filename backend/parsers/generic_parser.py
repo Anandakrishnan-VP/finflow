@@ -110,29 +110,48 @@ def parse_decimal(s: str) -> Optional[Decimal]:
 
 def parse_date(s: str) -> Optional[datetime]:
     s = s.strip()
+    s = re.sub(r'\s*([/\-\.])\s*', r'\1', s)
+    s = re.sub(r'\s+', ' ', s)
+
     for fmt in DATE_FORMATS:
         try:
-            return datetime.strptime(s, fmt)
+            dt = datetime.strptime(s, fmt)
+            if "%y" not in fmt and "%Y" not in fmt and dt.year == 1900:
+                dt = dt.replace(year=datetime.now().year)
+            if dt.year >= 1980 and dt.year <= datetime.now().year + 1:
+                return dt
         except ValueError:
             pass
             
     # 1. Try to find a 3-part date first
-    m = re.search(r'(\d{1,2}[/\-\.\s](?:\d{1,2}|[A-Za-z]{3,9})[/\-\.\s]\d{2,4})', s)
+    m = re.search(r'(\d{1,2}\s*[/\-\.\s]\s*(?:\d{1,2}|[A-Za-z]{3,9})\s*[/\-\.\s]\s*\d{2,4})', s)
     if m:
         date_part = m.group(1)
+        date_part = re.sub(r'\s*([/\-\.])\s*', r'\1', date_part)
+        date_part = re.sub(r'\s+', ' ', date_part)
         for fmt in DATE_FORMATS:
             try:
-                return datetime.strptime(date_part, fmt)
+                dt = datetime.strptime(date_part, fmt)
+                if "%y" not in fmt and "%Y" not in fmt and dt.year == 1900:
+                    dt = dt.replace(year=datetime.now().year)
+                if dt.year >= 1980 and dt.year <= datetime.now().year + 1:
+                    return dt
             except ValueError:
                 pass
                 
     # 2. Try to find a 2-part date (Day + Month)
-    m2 = re.search(r'(\d{1,2}[/\-\.\s](?:[A-Za-z]{3,9}|\d{1,2}))', s)
+    m2 = re.search(r'(\d{1,2}\s*[/\-\.\s]\s*(?:[A-Za-z]{3,9}|\d{1,2}))', s)
     if m2:
         date_part = m2.group(1)
+        date_part = re.sub(r'\s*([/\-\.])\s*', r'\1', date_part)
+        date_part = re.sub(r'\s+', ' ', date_part)
         for fmt in DATE_FORMATS:
             try:
-                return datetime.strptime(date_part, fmt)
+                dt = datetime.strptime(date_part, fmt)
+                if "%y" not in fmt and "%Y" not in fmt and dt.year == 1900:
+                    dt = dt.replace(year=datetime.now().year)
+                if dt.year >= 1980 and dt.year <= datetime.now().year + 1:
+                    return dt
             except ValueError:
                 pass
     return None

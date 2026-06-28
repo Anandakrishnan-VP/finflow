@@ -1,7 +1,81 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '../api/client';
 
-const BANKS = ['sbi', 'hdfc', 'axis', 'kotak', 'icici', 'yes_bank', 'pnb', 'canara', 'union_bank'];
+const BANKS = [
+  'sbi', 'hdfc', 'axis', 'kotak',
+  'indusind', 'idfc', 'bandhan', 'yes_bank',
+  'icici', 'pnb', 'canara', 'union_bank',
+];
+
+function ProcessingStatus({ statement }) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (statement.status !== 'PROCESSING' && statement.status !== 'PENDING') return;
+
+    const getElapsed = () => {
+      if (!statement.uploaded_at) return 0;
+      const uploadedTime = new Date(statement.uploaded_at).getTime();
+      return Math.max(0, Math.floor((Date.now() - uploadedTime) / 1000));
+    };
+
+    setElapsed(getElapsed());
+
+    const interval = setInterval(() => {
+      setElapsed(getElapsed());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [statement.status, statement.uploaded_at]);
+
+  const isOCR = statement.stage?.toLowerCase().includes('ocr') || statement.stage?.toLowerCase().includes('scanned');
+  const estimatedTotal = isOCR ? 45 : 10;
+  const remaining = Math.max(1, estimatedTotal - elapsed);
+
+  const getSupportMessage = () => {
+    if (statement.status === 'PENDING') return "Queueing statement for analysis...";
+    if (isOCR) {
+      if (elapsed > 45) return "Performing heavy OCR layout analysis (this is normal for scanned files)...";
+      if (elapsed > 25) return "Running character recognition and table alignment...";
+      return "Extracting scan components using neural OCR...";
+    }
+    if (elapsed > 10) return "Validating parsed columns and transaction entries...";
+    return "Analyzing document layout...";
+  };
+
+  return (
+    <div className="flex flex-col gap-1 w-64">
+      <div className="flex justify-between items-center text-xs">
+        <span className="font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-[10px] flex items-center gap-1 animate-pulse">
+          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-ping"></span>
+          {statement.status}
+        </span>
+        <span className="text-slate-500 font-mono text-[10px]">{statement.progress || 0}%</span>
+      </div>
+      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden relative">
+        <div 
+          className="bg-blue-500 h-1.5 rounded-full transition-all duration-300 relative" 
+          style={{ width: `${statement.progress || 0}%` }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-shimmer"></div>
+        </div>
+      </div>
+      {statement.stage && (
+        <div className="text-[10px] text-slate-500 font-medium truncate" title={statement.stage}>
+          Stage: {statement.stage}
+        </div>
+      )}
+      <div className="text-[10px] text-slate-400 italic">
+        {getSupportMessage()} 
+        {statement.status === 'PROCESSING' && (
+          <span className="font-semibold font-mono text-slate-500 ml-1">
+            (Est. remaining: {remaining}s)
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function UploadPanel({ caseId, onUploaded }) {
   const [files, setFiles] = useState([]);
@@ -167,18 +241,7 @@ export default function UploadPanel({ caseId, onUploaded }) {
                 <td className="px-4 py-3 text-slate-500">{s.bank || '—'}</td>
                 <td className="px-4 py-3">
                   {s.status === 'PROCESSING' || s.status === 'PENDING' ? (
-                    <div className="flex flex-col gap-1 w-64">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-[10px]">
-                          {s.status}
-                        </span>
-                        <span className="text-slate-500 font-mono text-[10px]">{s.progress || 0}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
-                        <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${s.progress || 0}%` }}></div>
-                      </div>
-                      {s.stage && <div className="text-[10px] text-slate-400 truncate" title={s.stage}>{s.stage}</div>}
-                    </div>
+                    <ProcessingStatus statement={s} />
                   ) : s.status === 'PARSED' ? (
                     <div className="flex items-center gap-2">
                       <span className="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-medium">
