@@ -77,10 +77,14 @@ export default function CaseDetailPage() {
   }, [caseInfo, statements, hasSetDefaultTab]);
 
   const startAnalysis = async () => {
-    const { data } = await apiClient.post(`/cases/${caseId}/analyze`);
-    setTaskId(data.task_id);
-    // Optimistically update case info status
-    setCaseInfo(prev => prev ? { ...prev, status: 'ANALYZING' } : null);
+    try {
+      const { data } = await apiClient.post(`/cases/${caseId}/analyze`);
+      setTaskId(data.task_id);
+      setCaseInfo(prev => prev ? { ...prev, status: 'ANALYZING' } : null);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to trigger analysis.");
+      loadCase();
+    }
   };
 
   const [isEditing, setIsEditing] = useState(false);
@@ -117,6 +121,7 @@ export default function CaseDetailPage() {
   if (!caseInfo) return <div className="text-sm text-slate-400 p-6">Loading case...</div>;
 
   const needsAnalysis = ANALYSIS_REQUIRED_TABS.includes(activeTab) && caseInfo.status !== 'ANALYZED';
+  const isAnalysisDisabled = statements.length === 0 || statements.some(s => ['PROCESSING', 'PENDING', 'FAILED', 'NEEDS_REVIEW'].includes(s.status));
 
   return (
     <div>
@@ -266,10 +271,18 @@ export default function CaseDetailPage() {
               </p>
               <button 
                 onClick={startAnalysis} 
-                className="inline-flex items-center gap-2 bg-indigo-600 text-white rounded-lg px-5 py-2.5 text-xs font-semibold hover:bg-indigo-500 transition-colors shadow-sm"
+                disabled={isAnalysisDisabled}
+                className="inline-flex items-center gap-2 bg-indigo-600 text-white rounded-lg px-5 py-2.5 text-xs font-semibold hover:bg-indigo-500 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
                 <span>Analyze Case Now</span>
               </button>
+              {isAnalysisDisabled && (
+                <p className="text-[11px] text-amber-600 mt-2.5 max-w-xs mx-auto">
+                  ⚠️ {statements.length === 0 
+                      ? "Please upload a bank statement in the 'Upload' tab first." 
+                      : "Make sure all statements are successfully parsed (Map Columns if needed) before analyzing."}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -308,12 +321,20 @@ export default function CaseDetailPage() {
                     </p>
                   </div>
                   {caseInfo.status !== 'ANALYZED' && caseInfo.status !== 'ANALYZING' && (
-                    <button 
-                      onClick={startAnalysis} 
-                      className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg px-4 py-2 font-semibold transition shadow-sm"
-                    >
-                      Analyze Case
-                    </button>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <button 
+                        onClick={startAnalysis} 
+                        disabled={isAnalysisDisabled}
+                        className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed rounded-lg px-4 py-2 font-semibold transition shadow-sm"
+                      >
+                        Analyze Case
+                      </button>
+                      {isAnalysisDisabled && (
+                        <span className="text-[10px] text-amber-600 font-medium">
+                          {statements.length === 0 ? "Upload statements first" : "Statements not ready"}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

@@ -50,6 +50,31 @@ async def upload_statement(
     file_hash = sha256.hexdigest()
     mime      = mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
 
+    # Check if duplicate file already uploaded in active cases
+    dup_res = await db.execute(
+        text("""SELECT s.case_id, c.title 
+                FROM statements s 
+                JOIN cases c ON s.case_id = c.id 
+                WHERE s.file_hash = :hash AND s.parse_status != 'FAILED' AND c.status != 'ARCHIVED'
+                LIMIT 1"""),
+        {"hash": file_hash}
+    )
+    dup_row = dup_res.fetchone()
+    if dup_row:
+        # Clean up the newly written duplicate file from disk
+        try:
+            os.remove(stored)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This statement has already been uploaded.",
+                "case_id": str(dup_row[0]),
+                "case_title": dup_row[1]
+            }
+        )
+
     # Insert statement row in PROCESSING state
     await db.execute(
         text("""INSERT INTO statements
@@ -84,7 +109,10 @@ async def list_statements(
         text("""SELECT id, original_filename AS filename, bank_name AS bank,
                        parse_status AS status, row_count AS rows_parsed, parse_error AS error,
                        parse_progress AS progress, parse_stage AS stage, column_mapping,
-                       uploaded_at, file_size_bytes AS file_size
+                       uploaded_at, file_size_bytes AS file_size,
+                       parse_method, parse_quality_score, parse_warnings,
+                       extracted_row_count, inserted_row_count, duplicate_row_count, rejected_row_count,
+                       needs_review_reason, ocr_confidence_avg
                 FROM statements
                 WHERE case_id = :cid
                 ORDER BY uploaded_at DESC"""),
@@ -216,7 +244,7 @@ async def get_file_preview(file_path: str) -> list[list[str]]:
                             # Scanned PDF: Run OCR on the first page to generate preview rows
                             import fitz, asyncio, tempfile
                             from security.sandbox import run_sandboxed_tesseract
-                            from parsers.pdf_scanned import reconstruct_table_from_tsv, preprocess_image
+                            from parsers.pdf_scanned import reconstruct_table_from_tsv, preprocess_image, clean_ocr_cell
                             from collections import Counter
                             
                             doc = fitz.open(file_path)
@@ -232,12 +260,39 @@ async def get_file_preview(file_path: str) -> list[list[str]]:
                                     success = preprocess_image(tmp_raw.name, tmp_proc.name)
                                     img_to_ocr = tmp_proc.name if success else tmp_raw.name
                                     
-                                tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
+                                # Try img2table on the preprocessed page image
+                                from img2table.document import Image as Img2TableImage
+                                from img2table.ocr import TesseractOCR as Img2TableTesseract
+                                import pandas as pd
+                                
+                                table = []
+                                try:
+                                    ocr = Img2TableTesseract(n_threads=1, lang="eng")
+                                    img_doc = Img2TableImage(src=img_to_ocr)
+                                    extracted_tables = img_doc.extract_tables(ocr=ocr, implicit_rows=True, borderless_tables=True)
+                                    if extracted_tables:
+                                        t = extracted_tables[0]
+                                        df = t.df
+                                        if df is not None and not df.empty:
+                                            table_grid = []
+                                            headers = [clean_ocr_cell(c) for c in df.columns]
+                                            if not all(str(h).isdigit() for h in headers):
+                                                table_grid.append(headers)
+                                            for _, row in df.iterrows():
+                                                table_grid.append([clean_ocr_cell(val) for val in row])
+                                            table_grid = [r for r in table_grid if any(c.strip() for c in r)]
+                                            if table_grid:
+                                                table = table_grid
+                                except Exception as img2table_err:
+                                    logger.warning("img2table preview failed: %s", img2table_err)
+
+                                if not table:
+                                    tsv_text = await run_sandboxed_tesseract(img_to_ocr, lang="eng")
+                                    table = reconstruct_table_from_tsv(tsv_text)
                                 
                                 os.unlink(tmp_raw.name)
                                 os.unlink(tmp_proc.name)
                                 
-                                table = reconstruct_table_from_tsv(tsv_text)
                                 if table:
                                     # 1. Run collapsed row expansion to reveal proper columns if they were merged
                                     from parsers.pdf_scanned import expand_collapsed_rows

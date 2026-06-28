@@ -79,3 +79,48 @@ async def archive_case(case_id: str,
     await db.commit()
     await log_action(db, current_user["user_id"], "CASE_ARCHIVED", "case", case_id)
     return {"status": "archived"}
+
+
+@router.delete("/{case_id}")
+async def hard_delete_case(case_id: str,
+                           current_user=Depends(require_role("ADMIN")),
+                           db: AsyncSession = Depends(get_db)):
+    """Permanently delete a case and all associated statements, transactions, alerts, and metrics."""
+    try:
+        # Delete dependent tables first to avoid FK constraints
+        await db.execute(text("DELETE FROM alerts WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM money_trails WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM evidence_packages WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM hypothesis_queries WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM case_next_actions WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM case_annotations WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM case_benford_results WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM narration_clusters WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM account_verdicts WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM human_review_queue WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM analysis_tasks WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM watchlist_hits WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM entity_case_appearances WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("UPDATE entities SET first_seen_case = NULL WHERE first_seen_case = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM transactions WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM statements WHERE case_id = :cid"), {"cid": case_id})
+        await db.execute(text("DELETE FROM cases WHERE id = :cid"), {"cid": case_id})
+        
+        await db.commit()
+    except Exception as db_err:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database deletion failed: {str(db_err)}")
+
+    # Neo4j Graph Database cleanup
+    try:
+        from neo4j_client import get_neo4j_driver
+        driver = get_neo4j_driver()
+        async with driver.session() as session:
+            await session.run("MATCH (n {case_id: $case_id}) DETACH DELETE n", {"case_id": case_id})
+    except Exception as neo_err:
+        import logging
+        logging.getLogger(__name__).warning("Failed to clean up Neo4j graph for deleted case %s: %s", case_id, neo_err)
+
+    await log_action(db, current_user["user_id"], "CASE_DELETED_PERMANENTLY", "case", case_id)
+    return {"status": "deleted_permanently"}
+

@@ -1,0 +1,30 @@
+[33mcommit f235a7e36dd4f631a9001d72868d8372f15a1b01[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32marjun/finflow-work[m[33m, [m[1;31morigin/feature/ocr-scanned-pdf-fixes[m[33m, [m[1;32myour-branch-name[m[33m, [m[1;32marjun/contributon[m[33m)[m
+Author:     Arjun Krishna <arjunkrishna70342@gmail.com>
+AuthorDate: Sat Jun 20 22:30:56 2026 +0530
+Commit:     Arjun Krishna <arjunkrishna70342@gmail.com>
+CommitDate: Sat Jun 20 22:30:56 2026 +0530
+
+    feat: scanned PDF OCR fixes, narration clustering OOM fix, column mapping passthrough
+    
+    - pdf_scanned.py: Replace word-gap cell splitting with histogram-based column
+      boundary detection (detect_column_boundaries). Add expand_collapsed_rows()
+      to handle scanned PDFs where columns have no pixel gap. Pass column_mapping
+      through parse_scanned_pdf, parse_image_file, _parse_tsv to generic parser.
+    
+    - router.py: Pass column_mapping through to parse_scanned_pdf and
+      parse_image_file in all routing paths (scanned direct, Stage 5 fallback,
+      image files).
+    
+    - narration_intel.py: Add MAX_CLUSTER_SAMPLES=10000 cap with stratified account
+      sampling to prevent SIGKILL OOM on 200k+ row datasets. Add max_features=5000
+      to TF-IDF. Propagate cluster labels back to full dataset after sampling.
+    
+    - statements.py: Add async OCR fallback in get_file_preview for scanned PDFs.
+    
+    - sandbox.py: Increase RLIMIT_NPROC, add OMP_THREAD_LIMIT=1 for Tesseract.
+    
+    - generic_parser.py: Filter rows by most-common column length in infer_column_roles.
+    
+    - UploadPanel.jsx: Add previewLoading spinner state for OCR preview generation.
+    
+    - alembic: Add chain-of-custody and column_mapping migration.

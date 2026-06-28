@@ -29,12 +29,13 @@ export default function DashboardPage() {
 
   const archiveCase = async (e, id) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete/archive this case?")) return;
+    if (!window.confirm("Are you sure you want to delete this case?")) return;
+    if (!window.confirm("WARNING: This will permanently delete all case data, uploaded statements, and transactions from the database. This action cannot be undone. Do you want to proceed?")) return;
     try {
-      await apiClient.patch(`/cases/${id}/archive`);
+      await apiClient.delete(`/cases/${id}`);
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "Failed to archive case. Make sure you are logged in as ADMIN.");
+      alert(err.response?.data?.detail || "Failed to delete case. Make sure you are logged in as ADMIN.");
     }
   };
 

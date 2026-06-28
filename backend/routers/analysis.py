@@ -21,6 +21,29 @@ async def start_analysis(case_id: str,
     )
     if not result.fetchone():
         raise HTTPException(404, "Case not found")
+
+    # Check statement blockers before triggering Celery task
+    stmt_result = await db.execute(
+        text("""SELECT original_filename, parse_status, COALESCE(needs_review_reason, parse_error, parse_stage, '') AS reason
+                FROM statements
+                WHERE case_id = :cid"""),
+        {"cid": case_id}
+    )
+    statements = stmt_result.fetchall()
+    if not statements:
+        raise HTTPException(status_code=400, detail="Cannot analyze case: No bank statements have been uploaded.")
+
+    blockers = []
+    for stmt in statements:
+        if stmt.parse_status not in ("PARSED", "PARSED_WITH_WARNINGS"):
+            blockers.append(f"{stmt.original_filename} ({stmt.parse_status}: {stmt.reason})")
+
+    if blockers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot analyze case: Some statements are not fully parsed. Blockers: {', '.join(blockers)}"
+        )
+
     task = analyze_case_task.delay(case_id)
     await db.execute(
         text("""INSERT INTO analysis_tasks (case_id, celery_task_id, status, started_at)
