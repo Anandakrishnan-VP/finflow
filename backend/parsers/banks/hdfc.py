@@ -13,27 +13,9 @@ from schemas.uts import UniversalTransaction, TransactionType
 
 logger = logging.getLogger(__name__)
 BANK_NAME = "HDFC Bank"
-DATE_FORMATS = ["%d/%m/%y", "%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y", "%d %b %Y"]
+from parsers.shared.amount_parser import parse_amount, resolve_txn_type
+from parsers.shared.date_parser import parse_date, is_skip_row
 
-def _parse_date(s: str) -> Optional[datetime]:
-    for fmt in DATE_FORMATS:
-        try:
-            return datetime.strptime(s.strip(), fmt)
-        except ValueError:
-            pass
-    return None
-
-def _parse_amount(s: str) -> Optional[Decimal]:
-    """RULE 1: Returns Decimal, never float."""
-    if not s or not s.strip():
-        return None
-    cleaned = re.sub(r"[₹,\s]", "", s.strip())
-    if not cleaned:
-        return None
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation:
-        return None
 
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
     # Try camelot lattice first
@@ -102,8 +84,10 @@ def _parse_hdfc_row(cells: list, account_id: str,
     try:
         if len(cells) < 5:
             return None
-        date = _parse_date(cells[0])
+        date = parse_date(cells[0])
         if not date:
+            return None
+        if is_skip_row(cells[0], narration):
             return None
         narration = cells[1]
         # Flexible column detection: look for non-empty amount in Debit or Credit cols
@@ -112,16 +96,14 @@ def _parse_hdfc_row(cells: list, account_id: str,
         else:
             debit_str, credit_str, balance_str = cells[2], cells[3], cells[4]
 
-        debit  = _parse_amount(debit_str)
-        credit = _parse_amount(credit_str)
-        balance= _parse_amount(balance_str)
+        debit  = parse_amount(debit_str)
+        credit = parse_amount(credit_str)
+        balance= parse_amount(balance_str)
 
-        if debit and debit > 0:
-            amount, txn_type = debit, TransactionType.DEBIT
-        elif credit and credit > 0:
-            amount, txn_type = credit, TransactionType.CREDIT
-        else:
+        amount, txn_type_str = resolve_txn_type(debit, credit)
+        if amount is None:
             return None
+        txn_type = TransactionType.DEBIT if txn_type_str == 'DR' else TransactionType.CREDIT
 
         file_hash = hashlib.sha256(open(file_path,"rb").read(8192)).hexdigest() if file_path else ""
         txn_hash = hashlib.sha256(

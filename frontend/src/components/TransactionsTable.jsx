@@ -153,11 +153,22 @@ export default function TransactionsTable({ caseId }) {
                 }`}>
                   {t.txn_type === 'CR' ? '+' : '-'}₹{Number(t.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
-                <td className="px-5 py-3 text-slate-600 font-medium">
-                  {t.counterparty_account ? (
+                <td className="px-5 py-3 text-slate-600">
+                  {t.counterparty_account || t.counterparty_name || t.counterparty_bank ? (
                     <div className="flex flex-col">
-                      <span className="font-mono text-[11px]">{t.counterparty_account}</span>
-                      {t.counterparty_name && <span className="text-[10px] text-slate-400 truncate max-w-[150px]">{t.counterparty_name}</span>}
+                      {t.counterparty_account && (
+                        <span className="font-mono text-[11px] text-slate-700 font-medium">{t.counterparty_account}</span>
+                      )}
+                      {t.counterparty_name && (
+                        <span className="text-[10px] text-slate-500 font-semibold truncate max-w-[180px]" title={t.counterparty_name}>
+                          {t.counterparty_name}
+                        </span>
+                      )}
+                      {t.counterparty_bank && (
+                        <span className="text-[9px] text-slate-400 italic truncate max-w-[180px]" title={t.counterparty_bank}>
+                          {t.counterparty_bank}
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <span className="text-slate-300">—</span>

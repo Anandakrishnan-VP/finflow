@@ -12,19 +12,9 @@ from schemas.uts import UniversalTransaction, TransactionType
 
 logger = logging.getLogger(__name__)
 BANK_NAME = "Kotak Mahindra Bank"
-DATE_FORMATS = ["%d-%m-%Y", "%d/%m/%Y", "%d %b %Y", "%d-%b-%Y"]
+from parsers.shared.amount_parser import parse_amount, resolve_txn_type
+from parsers.shared.date_parser import parse_date, is_skip_row
 
-def _pd(s):
-    for fmt in DATE_FORMATS:
-        try: return datetime.strptime(s.strip(), fmt)
-        except: pass
-    return None
-
-def _pa(s) -> Optional[Decimal]:
-    if not s or not s.strip(): return None
-    cleaned = re.sub(r"[₹,\s]", "", s)
-    try: return Decimal(cleaned)
-    except: return None
 
 def _is_header(cells):
     t = " ".join(c.lower() for c in cells)
@@ -33,28 +23,30 @@ def _is_header(cells):
 def _parse_row(cells, account_id, account_holder, file_path):
     try:
         if len(cells) < 4: return None
-        date = _pd(cells[0])
+        date = parse_date(cells[0])
         if not date: return None
         narration = cells[1]
+        if is_skip_row(cells[0], narration): return None
         # Kotak may have Dr/Cr indicator in col 2
         dr_cr_indicator = cells[2].strip().upper() if len(cells) > 2 else ""
         if len(cells) >= 6:
-            wd, dep, bal = _pa(cells[3]), _pa(cells[4]), _pa(cells[5])
+            wd, dep, bal = parse_amount(cells[3]), parse_amount(cells[4]), parse_amount(cells[5])
         elif len(cells) >= 5:
-            wd, dep, bal = _pa(cells[2]), _pa(cells[3]), _pa(cells[4])
+            wd, dep, bal = parse_amount(cells[2]), parse_amount(cells[3]), parse_amount(cells[4])
         else:
             wd, dep, bal = None, None, None
 
-        if wd and wd > 0:
-            amount, txn_type = wd, TransactionType.DEBIT
-        elif dep and dep > 0:
-            amount, txn_type = dep, TransactionType.CREDIT
-        elif dr_cr_indicator in ("DR", "D") and _pa(cells[-2]):
-            amount, txn_type = _pa(cells[-2]), TransactionType.DEBIT
-            bal = _pa(cells[-1])
-        elif dr_cr_indicator in ("CR", "C") and _pa(cells[-2]):
-            amount, txn_type = _pa(cells[-2]), TransactionType.CREDIT
-            bal = _pa(cells[-1])
+        amount, txn_type_str = resolve_txn_type(wd, dep)
+        if amount is not None:
+            txn_type = TransactionType.DEBIT if txn_type_str == 'DR' else TransactionType.CREDIT
+        elif dr_cr_indicator in ("DR", "D") and parse_amount(cells[-2]):
+            amount = parse_amount(cells[-2])
+            txn_type = TransactionType.DEBIT
+            bal = parse_amount(cells[-1])
+        elif dr_cr_indicator in ("CR", "C") and parse_amount(cells[-2]):
+            amount = parse_amount(cells[-2])
+            txn_type = TransactionType.CREDIT
+            bal = parse_amount(cells[-1])
         else:
             return None
 

@@ -36,6 +36,8 @@
       "confidence": "MEDIUM",
       "reasoning": "Transactions show normal activity including regular monthly rent payments, salary credits, and family support transfers. No high-frequency structuring or layering patterns detected."
     }
-  }
+  },
+  "graph_explanation": "The transaction network graph shows a dominant hub-spoke structure centered around the primary account. This primary account is connected to multiple counterparty accounts. We detect a high concentration of funds flowing through a few specific counterparties (layering). In addition, circular flow paths were identified, showing round-trip routing of money. High-risk node verdicts are concentrated in 3 nodes linked directly to known watchlist items, while lower-risk nodes form the outer perimeter of the concentric network. Recommendation: Inspect the high-risk accounts and audit the circular transactions."
 }
+
 

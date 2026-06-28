@@ -17,15 +17,49 @@ async def populate_graph(case_id: str, txns: list[UniversalTransaction]):
             except Exception as idx_err:
                 logger.warning("Failed to create Neo4j indexes (ignoring): %s", idx_err)
 
-            # Create account nodes in batch
-            accounts = list({t.account_id for t in txns if t.account_id} | \
-                            {t.counterparty_account for t in txns if t.counterparty_account})
-            if accounts:
+            # Create account nodes with metadata in batch
+            account_meta = {}
+            for t in txns:
+                if t.account_id:
+                    aid = t.account_id
+                    if aid not in account_meta:
+                        account_meta[aid] = {"name": t.account_holder or "", "bank": t.bank_name or "", "is_primary": True}
+                    else:
+                        if not account_meta[aid]["name"] and t.account_holder:
+                            account_meta[aid]["name"] = t.account_holder
+                        if not account_meta[aid]["bank"] and t.bank_name:
+                            account_meta[aid]["bank"] = t.bank_name
+                        account_meta[aid]["is_primary"] = True
+
+                if t.counterparty_account:
+                    cacc = t.counterparty_account
+                    if cacc not in account_meta:
+                        account_meta[cacc] = {"name": t.counterparty_name or "", "bank": t.counterparty_bank or "", "is_primary": False}
+                    else:
+                        if not account_meta[cacc]["name"] and t.counterparty_name:
+                            account_meta[cacc]["name"] = t.counterparty_name
+                        if not account_meta[cacc]["bank"] and t.counterparty_bank:
+                            account_meta[cacc]["bank"] = t.counterparty_bank
+
+            accounts_data = [
+                {
+                    "account_id": aid,
+                    "name": meta["name"] or ("Primary Account" if meta["is_primary"] else "Unknown Counterparty"),
+                    "bank": meta["bank"] or "Unknown Bank",
+                    "is_primary": meta["is_primary"]
+                }
+                for aid, meta in account_meta.items()
+            ]
+
+            if accounts_data:
                 await session.run("""
-                    UNWIND $accounts AS account_id
-                    MERGE (a:Account {account_id: account_id, case_id: $cid})
-                    SET a.updated_at = timestamp()
-                """, accounts=accounts, cid=case_id)
+                    UNWIND $accounts_data AS item
+                    MERGE (a:Account {account_id: item.account_id, case_id: $cid})
+                    SET a.name = item.name,
+                        a.bank = item.bank,
+                        a.is_primary = item.is_primary,
+                        a.updated_at = timestamp()
+                """, accounts_data=accounts_data, cid=case_id)
 
             # Create transaction edges in batch
             tx_data = []

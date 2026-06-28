@@ -12,15 +12,19 @@ from security.clamav import scan_file
 
 logger = logging.getLogger(__name__)
 
-IMPLEMENTED_BANKS = {"sbi", "hdfc", "axis", "kotak"}
+# Implemented parsers — complete, tested
+IMPLEMENTED_BANKS = {"sbi", "hdfc", "axis", "kotak", "indusind", "idfc", "bandhan", "yes_bank"}
 
 BANK_KEYWORDS = {
     "sbi": ["state bank", "sbi", "sbinb"],
     "hdfc": ["hdfc", "hdfcbank"],
-    "axis": ["axis bank", "axisbank", "utib"],
+    "axis": ["axis", "axis bank", "axisbank", "utib"],
     "kotak": ["kotak", "kotakmahindra", "kkbk"],
+    "indusind": ["induslnd", "indusind", "indus ind", "iibl", "indb"],
+    "idfc":     ["idfc", "idfb", "idfc first", "idfcfirst"],
+    "bandhan":  ["bandhan", "bdbl", "bandhan bank"],
+    "yes_bank": ["yes bank", "yesbank", "yesb", "yes bank ltd"],
     "icici": ["icici", "icicib"],
-    "yes_bank": ["yes bank", "yesbank", "yesb"],
     "pnb": ["punjab national", "pnb", "punb"],
     "canara": ["canara", "cnrb"],
     "union_bank": ["union bank", "ubin"],
@@ -38,10 +42,62 @@ HOLDER_PATTERNS = [
 
 
 def detect_bank(file_path: str, first_page_text: str = "") -> Optional[str]:
-    combined = (Path(file_path).stem + " " + first_page_text).lower()
+    """
+    Detect bank from filename and first-page text.
+    Returns bank key (e.g. 'sbi') or None.
+    If detection fails, the upload UI prompts the user to select manually.
+    """
+    stem_lower = Path(file_path).stem.lower()
+    first_page_lower = first_page_text.lower()
+    
+    # Stage 1: Check filename first (very high confidence)
     for bank_key, keywords in BANK_KEYWORDS.items():
-        if any(kw in combined for kw in keywords):
+        if any(kw in stem_lower for kw in keywords):
             return bank_key
+
+    # Stage 2: Parse and resolve IFSC code from the header block
+    import re
+    ifsc_match = re.search(r'\bifsc\s*(?:code)?\s*[:\-.\s]*\s*([a-z]{4})0[a-z0-9]{6}\b', first_page_lower)
+    if ifsc_match:
+        prefix = ifsc_match.group(1).upper()
+        ifsc_mapping = {
+            "IDFB": "idfc",
+            "UTIB": "axis",
+            "HDFC": "hdfc",
+            "ICIC": "icici",
+            "SBIN": "sbi",
+            "KKBK": "kotak",
+            "YESB": "yes_bank",
+            "INDB": "indusind",
+            "BDBL": "bandhan",
+            "PUNB": "pnb",
+            "CNRB": "canara",
+            "UBIN": "union_bank",
+        }
+        if prefix in ifsc_mapping:
+            return ifsc_mapping[prefix]
+
+    # Stage 3: Look for bank keywords in the header block (first 2000 chars)
+    # We prioritize matching based on owner's bank header, ignoring transaction details noise.
+    header_part = first_page_lower[:2000]
+    for bank_key, keywords in BANK_KEYWORDS.items():
+        sorted_kws = sorted(keywords, key=len, reverse=True)
+        for kw in sorted_kws:
+            if kw in header_part:
+                # If we matched Axis but the header also contains IDFC terms, choose IDFC
+                if bank_key == "axis" and ("idfc" in header_part or "idfb" in header_part):
+                    continue
+                return bank_key
+
+    # Fallback to checking the entire text if needed
+    for bank_key, keywords in BANK_KEYWORDS.items():
+        sorted_kws = sorted(keywords, key=len, reverse=True)
+        for kw in sorted_kws:
+            if kw in first_page_lower:
+                if bank_key == "axis" and ("idfc" in first_page_lower or "idfb" in first_page_lower):
+                    continue
+                return bank_key
+
     return None
 
 

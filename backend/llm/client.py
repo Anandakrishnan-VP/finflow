@@ -38,6 +38,15 @@ async def _call_template(response_key: str, analysis: dict = None) -> str:
     templates = _load_templates()
     if response_key == "narrative":
         return templates.get("narrative", "Narrative analysis unavailable in template mode.")
+    elif response_key == "graph_explanation":
+        return templates.get("graph_explanation", "Graph explanation analysis unavailable in template mode.")
+    elif response_key == "nl_query":
+        import json
+        q = (analysis or {}).get("_q", "").lower()
+        if "circular" in q or "loop" in q:
+            return json.dumps(templates.get("nl_queries", {}).get("circular", {}))
+        else:
+            return json.dumps(templates.get("nl_queries", {}).get("default", {}))
     elif response_key == "case_theory":
         import json
         return json.dumps(templates.get("case_theory", {"typology": "unknown",
@@ -46,7 +55,6 @@ async def _call_template(response_key: str, analysis: dict = None) -> str:
     elif response_key == "second_opinion":
         import json
         opinions = templates.get("second_opinion", {})
-        # Guarantee Kotak Mule 3 (account_id "2245678") is NOT_SUSPICIOUS to show divergence
         acc_id = (analysis or {}).get("account_id", "")
         if acc_id == "2245678":
             return json.dumps(opinions.get("clear", {

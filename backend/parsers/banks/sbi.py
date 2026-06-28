@@ -14,27 +14,8 @@ from schemas.uts import UniversalTransaction, TransactionType
 
 logger = logging.getLogger(__name__)
 BANK_NAME = "State Bank of India"
-DATE_FORMATS = ["%d %b %Y", "%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y", "%d/%m/%y"]
-
-def _parse_date(s: str) -> Optional[datetime]:
-    for fmt in DATE_FORMATS:
-        try:
-            return datetime.strptime(s.strip(), fmt)
-        except ValueError:
-            pass
-    return None
-
-def _parse_amount(s: str) -> Optional[Decimal]:
-    """RULE 1: Returns Decimal, never float."""
-    if not s or not s.strip():
-        return None
-    cleaned = re.sub(r"[₹,\s]", "", s.strip())
-    if not cleaned:
-        return None
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation:
-        return None
+from parsers.shared.amount_parser import parse_amount, resolve_txn_type
+from parsers.shared.date_parser import parse_date, is_skip_row
 
 def _is_header_row(cells: list[str]) -> bool:
     text = " ".join(c.lower() for c in cells)
@@ -120,11 +101,13 @@ def _parse_sbi_row(cells: list[str], account_id: str, account_holder: str, file_
     try:
         if len(cells) < 5:
             return None
-        date = _parse_date(cells[0])
+        date = parse_date(cells[0])
         if not date:
             return None
         # narration is usually column 2 or 1
         narration = cells[2] if len(cells) >= 7 else cells[1]
+        if is_skip_row(cells[0], narration):
+            return None
 
         # Handle 5-column format (no separate Ref/Value Date columns)
         if len(cells) == 5:
@@ -142,18 +125,14 @@ def _parse_sbi_row(cells: list[str], account_id: str, account_holder: str, file_
         else:
             return None
 
-        debit  = _parse_amount(debit_str)
-        credit = _parse_amount(credit_str)
-        balance= _parse_amount(balance_str)
+        debit  = parse_amount(debit_str)
+        credit = parse_amount(credit_str)
+        balance= parse_amount(balance_str)
 
-        if debit and debit > 0:
-            amount = debit
-            txn_type = TransactionType.DEBIT
-        elif credit and credit > 0:
-            amount = credit
-            txn_type = TransactionType.CREDIT
-        else:
+        amount, txn_type_str = resolve_txn_type(debit, credit)
+        if amount is None:
             return None
+        txn_type = TransactionType.DEBIT if txn_type_str == 'DR' else TransactionType.CREDIT
 
         txn_hash = _make_hash(account_id, date, amount, narration)
         return UniversalTransaction(

@@ -94,7 +94,7 @@ async def get_transactions(case_id: str,
     result = await db.execute(
         text(f"""SELECT t.txn_hash, t.account_id, t.txn_date, t.amount::text,
                         t.txn_type, t.balance_after::text, t.narration,
-                        t.counterparty_account
+                        t.counterparty_account, t.counterparty_name, t.counterparty_bank
                  FROM transactions t {where}
                  ORDER BY t.txn_date LIMIT :size OFFSET :off"""),
         params
