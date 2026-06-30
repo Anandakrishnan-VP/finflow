@@ -18,21 +18,32 @@ from parsers.shared.date_parser import parse_date, is_skip_row
 
 
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
-    # Try camelot lattice first
+    page_count = 1
     try:
-        import camelot
-        tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
-        all_rows = []
-        for table in tables:
-            for _, row in table.df.iterrows():
-                cells = [str(c).strip() for c in row]
-                if not _is_header(cells):
-                    all_rows.append(cells)
-        txns = _parse_rows(all_rows, file_path)
-        if txns:
-            return txns
-    except Exception as e:
-        logger.debug("HDFC camelot failed: %s", e)
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            page_count = len(pdf.pages)
+    except Exception:
+        pass
+
+    # Try camelot lattice first (skip for large files to avoid memory lockups)
+    if page_count <= 20:
+        try:
+            import camelot
+            tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
+            all_rows = []
+            for table in tables:
+                for _, row in table.df.iterrows():
+                    cells = [str(c).strip() for c in row]
+                    if not _is_header(cells):
+                        all_rows.append(cells)
+            txns = _parse_rows(all_rows, file_path)
+            if txns:
+                return txns
+        except Exception as e:
+            logger.debug("HDFC camelot failed: %s", e)
+    else:
+        logger.info("Large PDF (%d pages). Skipping Camelot in HDFC parser.", page_count)
 
     # Fall back to pdfplumber stream mode
     txns = []

@@ -88,6 +88,8 @@ services:
       - reports:/data/reports
       - ./models:/app/models:ro
       - hf_cache:/data/huggingface
+      - ./backend:/app
+      - ./scripts:/app/scripts
     networks:
       - internal
       - external
@@ -134,6 +136,8 @@ services:
       - reports:/data/reports
       - ./models:/app/models:ro
       - hf_cache:/data/huggingface
+      - ./backend:/app
+      - ./scripts:/app/scripts
     networks:
       - internal
     deploy:

@@ -83,7 +83,8 @@ def detect_bank(file_path: str, first_page_text: str = "") -> Optional[str]:
     for bank_key, keywords in BANK_KEYWORDS.items():
         sorted_kws = sorted(keywords, key=len, reverse=True)
         for kw in sorted_kws:
-            if kw in header_part:
+            pattern = rf"\b{re.escape(kw)}\b"
+            if re.search(pattern, header_part):
                 # If we matched Axis but the header also contains IDFC terms, choose IDFC
                 if bank_key == "axis" and ("idfc" in header_part or "idfb" in header_part):
                     continue
@@ -93,7 +94,8 @@ def detect_bank(file_path: str, first_page_text: str = "") -> Optional[str]:
     for bank_key, keywords in BANK_KEYWORDS.items():
         sorted_kws = sorted(keywords, key=len, reverse=True)
         for kw in sorted_kws:
-            if kw in first_page_lower:
+            pattern = rf"\b{re.escape(kw)}\b"
+            if re.search(pattern, first_page_lower):
                 if bank_key == "axis" and ("idfc" in first_page_lower or "idfb" in first_page_lower):
                     continue
                 return bank_key
@@ -138,21 +140,24 @@ async def route_file(
             module = importlib.import_module(f".banks.{bank_key}", package="parsers")
             parser_name = f"bank_{bank_key}"
             method = f"bank_specific_{ext.lstrip('.') or 'file'}"
+            res = None
             if ext == ".pdf":
-                txns = await module.parse_pdf(file_path)
+                res = await module.parse_pdf(file_path)
             elif ext in (".xlsx", ".xls"):
-                txns = await module.parse_excel(file_path)
+                res = await module.parse_excel(file_path)
             elif ext == ".csv":
-                txns = await module.parse_csv(file_path)
+                res = await module.parse_csv(file_path)
             elif ext == ".docx":
                 from parsers.docx_parser import parse_docx
-                txns = await parse_docx(file_path, bank_key)
-            # Some bank parsers (IDFC, IndusInd, Bandhan, Yes Bank) return
-            # (txns, warnings_list) tuples — unwrap to a plain list here.
-            if isinstance(txns, tuple):
-                txns, extra_warnings = txns[0], txns[1] if len(txns) > 1 else []
-                if extra_warnings:
-                    warnings.extend(extra_warnings)
+                res = await parse_docx(file_path, bank_key)
+            
+            # Gracefully handle both list and tuple returns from specific bank parsers
+            if isinstance(res, tuple) and len(res) == 2:
+                txns, parse_warns = res
+                if parse_warns:
+                    warnings.extend(parse_warns)
+            else:
+                txns = res
         except Exception as e:
             warnings.append(f"Specific parser {bank_key} failed; generic fallback used")
             logger.warning("Specific parser for %s failed, falling back to generic: %s", bank_key, e)
@@ -412,6 +417,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
             await progress_callback(80, "PDF is scanned. Running OCR fallback...")
         return await parse_scanned_pdf(file_path, bank_name, progress_callback, column_mapping=column_mapping)
 
+    page_count = 1
     extraction_attempts = []
     try:
         if progress_callback:
@@ -419,6 +425,7 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
         import pdfplumber
         rows = []
         with pdfplumber.open(file_path) as pdf:
+            page_count = len(pdf.pages)
             for page in pdf.pages:
                 table = page.extract_table()
                 if table:
@@ -430,21 +437,24 @@ async def _generic_parse_pdf(file_path: str, bank_name: str, file_hash: str, pro
     except Exception as e:
         logger.debug("pdfplumber table extract failed: %s", e)
 
-    for flavor, pct, label in (("lattice", 45, "bordered"), ("stream", 60, "borderless")):
-        try:
-            if progress_callback:
-                await progress_callback(pct, f"Stage {2 if flavor == 'lattice' else 3}/5: Extracting {label} tables (camelot {flavor})...")
-            import camelot
-            rows = []
-            tables = camelot.read_pdf(file_path, pages="all", flavor=flavor)
-            for table in tables:
-                for _, row in table.df.iterrows():
-                    cells = [str(c or "").strip() for c in row]
-                    if any(cells):
-                        rows.append(cells)
-            extraction_attempts.append((f"camelot_{flavor}", rows))
-        except Exception as e:
-            logger.debug("camelot %s extract failed: %s", flavor, e)
+    if page_count <= 20:
+        for flavor, pct, label in (("lattice", 45, "bordered"), ("stream", 60, "borderless")):
+            try:
+                if progress_callback:
+                    await progress_callback(pct, f"Stage {2 if flavor == 'lattice' else 3}/5: Extracting {label} tables (camelot {flavor})...")
+                import camelot
+                rows = []
+                tables = camelot.read_pdf(file_path, pages="all", flavor=flavor)
+                for table in tables:
+                    for _, row in table.df.iterrows():
+                        cells = [str(c or "").strip() for c in row]
+                        if any(cells):
+                            rows.append(cells)
+                extraction_attempts.append((f"camelot_{flavor}", rows))
+            except Exception as e:
+                logger.debug("camelot %s extract failed: %s", flavor, e)
+    else:
+        logger.info("Large PDF (%d pages). Bypassing Camelot for performance.", page_count)
 
     try:
         if progress_callback:
