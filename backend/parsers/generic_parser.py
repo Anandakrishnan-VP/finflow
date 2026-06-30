@@ -142,6 +142,11 @@ def parse_date(s: str) -> Optional[datetime]:
     """Fast regex-based date parser. 10-20x faster than strptime for large files."""
     global _last_fast_idx
     s = s.strip()
+    
+    # Normalize whitespaces, tabs, and newlines
+    s = re.sub(r'\s*([/\-\.])\s*', r'\1', s)
+    s = re.sub(r'\s+', ' ', s)
+
     if not s or not _HAS_DIGIT.search(s):
         return None
 
