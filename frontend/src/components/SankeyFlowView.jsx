@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { sankey, sankeyLinkHorizontal } from 'd3-sankey';
 import { apiClient } from '../api/client';
+import { useTheme } from '../contexts/ThemeContext';
 
 const WIDTH = 900;
 const HEIGHT = 520;
@@ -9,6 +10,7 @@ const HEIGHT = 520;
 export default function SankeyFlowView({ caseId, minAmount }) {
   const svgRef = useRef(null);
   const [data, setData] = useState(null);
+  const { theme } = useTheme();
 
   useEffect(() => {
     apiClient.get(`/cases/${caseId}/graph/flow`, { params: { min_amount: minAmount } })
@@ -70,15 +72,22 @@ export default function SankeyFlowView({ caseId, minAmount }) {
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    const colorFor = (score) => (score >= 65 ? '#dc2626' : score >= 30 ? '#d97706' : '#2563eb');
+    const style = getComputedStyle(document.documentElement);
+    const riskHigh = `rgb(${style.getPropertyValue('--risk-high').trim()})`;
+    const riskMedium = `rgb(${style.getPropertyValue('--risk-medium').trim()})`;
+    const riskLow = `rgb(${style.getPropertyValue('--risk-low').trim()})`;
+    const borderDefault = `rgb(${style.getPropertyValue('--border-default').trim()})`;
+    const inkSecondary = `rgb(${style.getPropertyValue('--ink-secondary').trim()})`;
+
+    const colorFor = (score) => (score >= 65 ? riskHigh : score >= 30 ? riskMedium : riskLow);
 
     svg.append('g')
       .selectAll('path')
       .data(graph.links)
       .join('path')
       .attr('d', sankeyLinkHorizontal())
-      .attr('stroke', (d) => (d.is_circular ? '#dc2626' : '#94a3b8'))
-      .attr('stroke-opacity', (d) => (d.is_circular ? 0.55 : 0.3))
+      .attr('stroke', (d) => (d.is_circular ? riskHigh : borderDefault))
+      .attr('stroke-opacity', (d) => (d.is_circular ? 0.6 : 0.35))
       .attr('stroke-width', (d) => Math.max(1, d.width))
       .attr('fill', 'none')
       .append('title')
@@ -95,7 +104,7 @@ export default function SankeyFlowView({ caseId, minAmount }) {
       .attr('width', (d) => d.x1 - d.x0)
       .attr('height', (d) => d.y1 - d.y0)
       .attr('fill', (d) => colorFor(d.composite_score))
-      .attr('rx', 2)
+      .attr('rx', 3)
       .append('title')
       .text((d) => `${d.id}${d.role_label ? ' · ' + d.role_label.replace(/_/g, ' ') : ''}`);
 
@@ -105,17 +114,18 @@ export default function SankeyFlowView({ caseId, minAmount }) {
       .attr('dy', '0.35em')
       .attr('text-anchor', (d) => (d.x0 < WIDTH / 2 ? 'start' : 'end'))
       .attr('font-size', 9)
-      .attr('fill', '#475569')
+      .attr('font-family', 'var(--font-mono)')
+      .attr('fill', inkSecondary)
       .text((d) => (d.value > (d3.max(graph.nodes, (n) => n.value) || 0) * 0.15 ? d.id : ''));
 
-  }, [data]);
+  }, [data, theme]);
 
-  if (!data) return <div className="text-sm text-slate-400 py-8">Loading flow data...</div>;
-  if (!data.flows.length) return <div className="text-sm text-slate-400 py-8">No flow data for this case yet.</div>;
+  if (!data) return <div className="text-sm text-ink-muted py-8 text-center">Loading flow data...</div>;
+  if (!data.flows.length) return <div className="text-sm text-ink-muted py-8 text-center">No flow data for this case yet — upload statements to get started.</div>;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-2">
-      <div className="text-xs text-slate-400 px-2 pt-1 pb-2">
+    <div className="bg-surface-raised border border-border-hairline rounded-lg p-2">
+      <div className="text-xs text-ink-muted px-2 pt-1 pb-2">
         Bar width = total amount transferred. Red links indicate money on a
         confirmed circular flow path. Hover any link or node for exact figures.
       </div>

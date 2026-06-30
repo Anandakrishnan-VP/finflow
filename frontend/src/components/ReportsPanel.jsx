@@ -59,19 +59,22 @@ export default function ReportsPanel({ caseId }) {
 
   return (
     <div className="space-y-4">
-      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3">
+      <div className="bg-risk-medium-bg border border-risk-medium/15 text-risk-medium text-xs rounded-lg p-3">
         All AI-generated narrative and risk scoring in these reports are investigative leads only
         and require expert human validation before use in any judicial proceeding.
       </div>
 
       {/* Individual Reports */}
       <div className="space-y-3">
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Individual Reports</h3>
+        <h3 className="text-xs font-semibold text-ink-muted uppercase tracking-wider">Individual Reports</h3>
         {REPORTS.map((r) => (
-          <div key={r.key} className="bg-white border border-slate-200 rounded-lg p-4 flex items-center justify-between">
-            <span className="text-sm text-slate-700">{r.label}</span>
-            <button onClick={() => download(r.key, r.filename)} disabled={busyKey === r.key}
-                    className="text-sm bg-slate-900 text-white rounded px-4 py-1.5 disabled:opacity-50">
+          <div key={r.key} className="bg-surface-raised border border-border-hairline rounded-lg p-4 flex items-center justify-between shadow-card">
+            <span className="text-sm font-semibold text-ink-primary">{r.label}</span>
+            <button
+              onClick={() => download(r.key, r.filename)}
+              disabled={busyKey === r.key}
+              className="text-xs bg-accent hover:bg-accent-hover text-accent-fg font-semibold rounded-md px-4 py-2 transition-colors disabled:opacity-50"
+            >
               {busyKey === r.key ? 'Generating...' : 'Download'}
             </button>
           </div>
@@ -79,16 +82,16 @@ export default function ReportsPanel({ caseId }) {
       </div>
 
       {/* Official Court-Ready Evidence Package */}
-      <div className="border border-indigo-200 bg-indigo-50/30 rounded-xl p-5 mt-6">
+      <div className="border border-accent/20 bg-accent-subtle rounded-xl p-5 mt-6">
         <div className="flex items-start gap-3 mb-4">
-          <div className="p-2 bg-indigo-100 rounded-lg text-indigo-700">
+          <div className="p-2 bg-accent/15 rounded-lg text-accent">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             </svg>
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Court-Ready Evidence Package</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <h3 className="text-sm font-semibold text-ink-primary">Court-Ready Evidence Package</h3>
+            <p className="text-xs text-ink-secondary mt-0.5">
               Generates a secure ZIP file bundling PDF report, Excel ledger, investigator metadata, and a cryptographically signed SHA-256 integrity manifest audit log.
             </p>
           </div>
@@ -100,19 +103,19 @@ export default function ReportsPanel({ caseId }) {
             placeholder="Officer Badge Number (e.g. KA-9821)"
             value={officerBadge}
             onChange={e => setOfficerBadge(e.target.value)}
-            className="flex-1 p-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="flex-1 p-2 border border-border rounded-md text-sm bg-surface-raised text-ink-primary focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <button
             type="submit"
             disabled={packageLoading || !officerBadge.trim()}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-lg px-5 py-2 disabled:opacity-40 transition-colors"
+            className="bg-accent hover:bg-accent-hover text-accent-fg font-semibold text-sm rounded-md px-5 py-2 disabled:opacity-40 transition-colors"
           >
             {packageLoading ? 'Compiling ZIP...' : 'Compile Evidence ZIP'}
           </button>
         </form>
 
         {packageError && (
-          <div className="mt-2.5 text-xs text-rose-600 font-medium bg-rose-50 border border-rose-100 p-2.5 rounded-lg">
+          <div className="mt-2.5 text-xs text-risk-high font-semibold bg-risk-high-bg border border-risk-high/15 p-2.5 rounded-lg">
             {packageError}
           </div>
         )}

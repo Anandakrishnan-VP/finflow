@@ -22,15 +22,32 @@ export default function TimelineChart({ caseId }) {
   if (data.length === 0) return null;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-4">
-      <h3 className="text-sm font-medium text-slate-700 mb-3">Transaction Volume Over Time</h3>
+    <div className="bg-surface-raised border border-border-hairline rounded-lg p-4 shadow-card">
+      <h3 className="text-sm font-semibold text-ink-primary mb-3">Transaction Volume Over Time</h3>
       <ResponsiveContainer width="100%" height={220}>
         <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-          <YAxis tick={{ fontSize: 10 }} />
-          <Tooltip formatter={(v) => `₹${Number(v).toLocaleString('en-IN')}`} />
-          <Line type="monotone" dataKey="amount" stroke="#0f172a" strokeWidth={2} dot={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="rgb(var(--border-default))" opacity={0.6} />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize: 9, fill: 'rgb(var(--ink-secondary))', fontFamily: 'var(--font-mono)' }}
+            stroke="rgb(var(--border-default))"
+          />
+          <YAxis
+            tick={{ fontSize: 9, fill: 'rgb(var(--ink-secondary))', fontFamily: 'var(--font-mono)' }}
+            stroke="rgb(var(--border-default))"
+            tickFormatter={(v) => v >= 100000 ? `${(v/100000).toFixed(1)}L` : v}
+          />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: 'rgb(var(--surface-raised))',
+              borderColor: 'rgb(var(--border-default))',
+              borderRadius: '8px',
+            }}
+            labelStyle={{ color: 'rgb(var(--ink-primary))', fontWeight: 'bold', fontSize: 11 }}
+            itemStyle={{ color: 'rgb(var(--accent))', fontSize: 11 }}
+            formatter={(v) => [`₹${Number(v).toLocaleString('en-IN')}`, 'Volume']}
+          />
+          <Line type="monotone" dataKey="amount" stroke="rgb(var(--accent))" strokeWidth={2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

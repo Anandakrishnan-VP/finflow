@@ -147,6 +147,12 @@ async def route_file(
             elif ext == ".docx":
                 from parsers.docx_parser import parse_docx
                 txns = await parse_docx(file_path, bank_key)
+            # Some bank parsers (IDFC, IndusInd, Bandhan, Yes Bank) return
+            # (txns, warnings_list) tuples — unwrap to a plain list here.
+            if isinstance(txns, tuple):
+                txns, extra_warnings = txns[0], txns[1] if len(txns) > 1 else []
+                if extra_warnings:
+                    warnings.extend(extra_warnings)
         except Exception as e:
             warnings.append(f"Specific parser {bank_key} failed; generic fallback used")
             logger.warning("Specific parser for %s failed, falling back to generic: %s", bank_key, e)
