@@ -24,46 +24,106 @@ export default function WatchlistPage() {
   };
 
   return (
-    <div>
-      <h1 className="text-lg font-semibold text-slate-900 mb-4">Watchlist</h1>
+    <div className="space-y-6">
+      {/* Page Header */}
+      <div className="pb-4 border-b border-border-hairline">
+        <h1 className="text-xl font-bold text-ink-primary">Forensic Watchlist</h1>
+        <p className="text-xs text-ink-muted mt-0.5">
+          Manage system-wide high-risk accounts, PAN cards, UPI IDs, and transaction keywords.
+        </p>
+      </div>
 
+      {/* Add New Entry Form */}
       {canEdit && (
-        <form onSubmit={add} className="bg-white border border-slate-200 rounded-lg p-4 mb-4 flex gap-2">
-          <select value={form.entry_type} onChange={(e) => setForm({ ...form, entry_type: e.target.value })}
-                  className="border border-slate-300 rounded px-2 py-1.5 text-sm">
-            {['ACCOUNT','PHONE','PAN','UPI','KEYWORD','ENTITY'].map(t => <option key={t}>{t}</option>)}
-          </select>
-          <input placeholder="Value" required value={form.value}
-                 onChange={(e) => setForm({ ...form, value: e.target.value })}
-                 className="flex-1 border border-slate-300 rounded px-3 py-1.5 text-sm" />
-          <input placeholder="Reason" value={form.reason}
-                 onChange={(e) => setForm({ ...form, reason: e.target.value })}
-                 className="flex-1 border border-slate-300 rounded px-3 py-1.5 text-sm" />
-          <button type="submit" className="bg-slate-900 text-white text-sm rounded px-4 py-1.5">Add</button>
+        <form
+          onSubmit={add}
+          className="bg-surface-raised border border-border-hairline rounded-xl p-4 flex flex-col md:flex-row gap-3 shadow-card"
+        >
+          <div className="w-full md:w-48 shrink-0">
+            <select
+              value={form.entry_type}
+              onChange={(e) => setForm({ ...form, entry_type: e.target.value })}
+              className="w-full border border-border rounded-lg px-3 py-2 text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+            >
+              {['ACCOUNT','PHONE','PAN','UPI','KEYWORD','ENTITY'].map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1">
+            <input
+              placeholder="Value (e.g. UPI alias, PAN card number...)"
+              required
+              value={form.value}
+              onChange={(e) => setForm({ ...form, value: e.target.value })}
+              className="w-full border border-border rounded-lg px-3 py-2 text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+            />
+          </div>
+          <div className="flex-1">
+            <input
+              placeholder="Reason for flagging / case reference"
+              value={form.reason}
+              onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              className="w-full border border-border rounded-lg px-3 py-2 text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+            />
+          </div>
+          <button
+            type="submit"
+            className="bg-accent hover:bg-accent-hover text-accent-fg text-xs font-semibold px-5 py-2 rounded-lg transition-colors shadow-sm shrink-0"
+          >
+            Add Entry
+          </button>
         </form>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-lg">
-        <table className="w-full text-sm">
-          <thead className="text-left text-slate-400 text-xs">
-            <tr><th className="px-4 py-2">Type</th><th className="px-4 py-2">Value</th>
-                <th className="px-4 py-2">Reason</th>{canEdit && <th className="px-4 py-2"></th>}</tr>
-          </thead>
-          <tbody>
-            {entries.map((e) => (
-              <tr key={e.id} className="border-t border-slate-100">
-                <td className="px-4 py-2 text-slate-500">{e.entry_type}</td>
-                <td className="px-4 py-2 text-slate-900">{e.value}</td>
-                <td className="px-4 py-2 text-slate-500">{e.reason}</td>
-                {canEdit && (
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => deactivate(e.id)} className="text-xs text-red-500 hover:underline">Deactivate</button>
-                  </td>
-                )}
+      {/* Table of Entries */}
+      <div className="bg-surface-raised border border-border-hairline rounded-xl overflow-hidden shadow-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-left text-ink-muted bg-surface-sunken/40 border-b border-border-hairline uppercase font-bold tracking-wider">
+              <tr>
+                <th className="px-5 py-3">Type</th>
+                <th className="px-5 py-3">Value</th>
+                <th className="px-5 py-3">Flagging Reason</th>
+                {canEdit && <th className="px-5 py-3 text-right">Actions</th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-border-hairline">
+              {entries.map((entry) => (
+                <tr key={entry.id} className="hover:bg-surface-sunken/20 transition-colors">
+                  <td className="px-5 py-3.5 font-bold text-ink-secondary">
+                    <span className="font-mono bg-surface-sunken/80 px-2 py-0.5 rounded border border-border-hairline">
+                      {entry.entry_type}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5 font-mono font-semibold text-ink-primary text-xs">
+                    {entry.value}
+                  </td>
+                  <td className="px-5 py-3.5 text-ink-secondary leading-relaxed">
+                    {entry.reason || <span className="italic text-ink-muted">No reason specified</span>}
+                  </td>
+                  {canEdit && (
+                    <td className="px-5 py-3.5 text-right">
+                      <button
+                        onClick={() => deactivate(entry.id)}
+                        className="text-[10px] font-bold text-risk-high hover:bg-risk-high-bg border border-transparent hover:border-risk-high/15 rounded px-2.5 py-1 transition-colors uppercase tracking-wider"
+                      >
+                        Deactivate
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {entries.length === 0 && (
+                <tr>
+                  <td colSpan={canEdit ? 4 : 3} className="text-center py-12 text-ink-muted italic">
+                    No active entries on the watchlist.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
