@@ -10,7 +10,11 @@ export default function LlmModeBadge() {
   if (!mode) return null;
   const isTemplate = mode.includes('template');
   return (
-    <span className={`text-xs px-2 py-1 rounded ${isTemplate ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+    <span className={`text-[10px] font-bold px-2 py-1 rounded border inline-block ${
+      isTemplate 
+        ? 'bg-risk-medium-bg text-risk-medium border-risk-medium/15' 
+        : 'bg-accent-subtle text-accent border-accent/20'
+    }`}>
       {isTemplate ? 'LLM: Offline template mode' : 'LLM: Groq connected'}
     </span>
   );
