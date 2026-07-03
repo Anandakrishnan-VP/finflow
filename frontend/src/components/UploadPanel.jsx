@@ -367,7 +367,9 @@ export default function UploadPanel({ caseId, onUploaded }) {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-ink-secondary mb-1">Narration Column *</label>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Narration Column * <span className="text-slate-400 font-normal">(Transaction Details / Description)</span>
+                  </label>
                   <select value={mapping.narration} onChange={(e) => setMapping({...mapping, narration: e.target.value})}
                           className="w-full text-xs border border-border bg-surface-raised text-ink-primary rounded px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent outline-none">
                     <option value="">Select Column...</option>

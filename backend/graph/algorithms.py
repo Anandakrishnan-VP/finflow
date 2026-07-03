@@ -26,11 +26,11 @@ async def run_graph_algorithms(case_id: str) -> dict:
                 await session.run("CALL gds.graph.drop($name) YIELD graphName", name=GRAPH_NAME)
 
             try:
-                # Project the graph
+                # Project the graph without String properties to avoid GDS errors
                 await session.run("""
                     CALL gds.graph.project(
                         $name,
-                        {Account: {label: 'Account', properties: {case_id: {defaultValue: ''}}}},
+                        {Account: {label: 'Account'}},
                         {SENT: {type: 'SENT', orientation: 'NATURAL'}}
                     )
                 """, name=GRAPH_NAME)
@@ -273,6 +273,7 @@ async def get_cytoscape_data(
 
     # RULE 27 input: degree distribution, computed once here so the frontend
     # doesn't have to recompute it from scratch
+    degree_map = {aid: meta.get("degree", 0) for aid, meta in account_meta_map.items()}
     degrees = sorted(degree_map.values())
     median_degree = degrees[len(degrees) // 2] if degrees else 0
     max_degree = max(degrees) if degrees else 0
@@ -349,7 +350,7 @@ async def run_taint_propagation(case_id: str, seed_account_ids: list[str]) -> di
                 await session.run("""
                     CALL gds.graph.project(
                         $name,
-                        {Account: {label: 'Account', properties: {case_id: {defaultValue: ''}}}},
+                        {Account: {label: 'Account'}},
                         {SENT: {type: 'SENT', orientation: 'NATURAL'}}
                     )
                 """, name=GRAPH_NAME)

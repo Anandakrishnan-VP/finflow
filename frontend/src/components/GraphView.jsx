@@ -95,7 +95,7 @@ export default function GraphView({ caseId }) {
           minNodeSpacing: 40,
           avoidOverlap: true,
           nodeDimensionsIncludeLabels: true,
-          spacingFactor: 1.5,
+          spacingFactor: 1.1,
           animate: false,
         }
       : { name: 'cose-bilkent', animate: false, nodeRepulsion: 8000 };
@@ -106,9 +106,9 @@ export default function GraphView({ caseId }) {
       layout,
       style: [
         { selector: 'node', style: {
-            'label': 'data(display_label)', 'font-size': 9, 'color': 'rgb(var(--ink-secondary))',
-            'width': 'mapData(volume, 0, 10000000, 18, 56)',
-            'height': 'mapData(volume, 0, 10000000, 18, 56)',
+            'label': 'data(display_label)', 'font-size': 9, 'color': 'var(--color-text-secondary)',
+            'width': 'mapData(volume, 0, 10000000, 24, 60)',
+            'height': 'mapData(volume, 0, 10000000, 24, 60)',
             'text-valign': 'bottom', 'text-margin-y': 4, 'text-wrap': 'none',
         }},
         { selector: 'node[risk_tier="low"]',    style: { 'shape': 'ellipse', 'background-color': 'rgb(var(--risk-low))' } },
@@ -116,12 +116,19 @@ export default function GraphView({ caseId }) {
         { selector: 'node[risk_tier="high"]',   style: { 'shape': 'hexagon', 'background-color': 'rgb(var(--risk-high))' } },
         // RULE 29: edge width and opacity scale with log_amount, never flat
         { selector: 'edge', style: {
-            'width': 'mapData(log_amount, 5, 18, 0.75, 6)',
-            'opacity': 'mapData(log_amount, 5, 18, 0.25, 0.9)',
-            'line-color': 'rgb(var(--border-default))', 'target-arrow-color': 'rgb(var(--border-default))',
+            'width': 'mapData(log_amount, 0, 18, 1.5, 7.5)',
+            'opacity': 'mapData(log_amount, 0, 18, 0.45, 0.9)',
+            'line-color': '#475569', 'target-arrow-color': '#475569',
             'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
         }},
-        { selector: ':selected', style: { 'border-width': 3, 'border-color': 'rgb(var(--accent))' } },
+        { selector: 'edge.hovered-edge', style: {
+            'line-color': '#0f172a',
+            'target-arrow-color': '#0f172a',
+            'width': 'mapData(log_amount, 0, 18, 2.5, 10.0)',
+            'opacity': 1.0,
+            'z-index': 9999,
+        }},
+        { selector: ':selected', style: { 'border-width': 3, 'border-color': '#0f172a' } },
         { selector: '.faded', style: { 'opacity': 0.08 } },
         { selector: '.highlighted', style: { 'border-width': 3, 'border-color': 'rgb(var(--accent))' } },
       ],
@@ -136,9 +143,29 @@ export default function GraphView({ caseId }) {
       const neighborhood = node.closedNeighborhood();
       cy.elements().difference(neighborhood).addClass('faded');
       neighborhood.removeClass('faded');
+      cy.scratch('_isIsolated', true);
     });
     cy.on('tap', (evt) => {
-      if (evt.target === cy) cy.elements().removeClass('faded');
+      if (evt.target === cy) {
+        cy.elements().removeClass('faded');
+        cy.scratch('_isIsolated', false);
+      }
+    });
+
+    cy.on('mouseover', 'node', (evt) => {
+      if (cy.scratch('_isIsolated')) return;
+      const node = evt.target;
+      const neighborhood = node.closedNeighborhood();
+      cy.elements().difference(neighborhood).addClass('faded');
+      neighborhood.removeClass('faded');
+      node.connectedEdges().addClass('hovered-edge');
+    });
+
+    cy.on('mouseout', 'node', (evt) => {
+      if (cy.scratch('_isIsolated')) return;
+      const node = evt.target;
+      cy.elements().removeClass('faded');
+      node.connectedEdges().removeClass('hovered-edge');
     });
 
     cyRef.current = cy;

@@ -358,6 +358,10 @@ async def parse_scanned_pdf(file_path: str, bank_name: str, progress_callback = 
     Convert each PDF page to image, run advanced preprocessing, run Surya OCR, and parse table.
     If column_mapping is provided (from manual UI mapping), it is passed to the generic table parser.
     """
+    if not is_pdf_scanned(file_path):
+        logger.info("PDF is digital. Bypassing scanned OCR fallback to prevent hanging.")
+        return []
+
     import fitz  # PyMuPDF
     from img2table.document import PDF as Img2TablePDF
     from img2table.ocr import TesseractOCR as Img2TableTesseract

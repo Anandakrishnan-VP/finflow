@@ -91,23 +91,35 @@ def _parse_row(cells: list[str], account_id: str,
 async def parse_pdf(file_path: str) -> tuple[list, list]:
     file_hash = hashlib.sha256(open(file_path, "rb").read()).hexdigest()
 
+    page_count = 1
     try:
-        import camelot
-        tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
-        txns, account_id, account_holder = [], "", ""
-        for table in tables:
-            for _, row in table.df.iterrows():
-                cells = [str(c).strip() for c in row]
-                if _is_header(cells):
-                    continue
-                txn = _parse_row(cells, account_id, account_holder, file_hash)
-                if txn:
-                    txns.append(txn)
-        if len(txns) >= 3:
-            logger.info("Bandhan: camelot extracted %d transactions", len(txns))
-            return txns, []
-    except Exception as e:
-        logger.debug("Bandhan camelot failed: %s", e)
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            page_count = len(pdf.pages)
+    except Exception:
+        pass
+
+    # Try camelot lattice first (skip for large files to avoid memory lockups)
+    if page_count <= 20:
+        try:
+            import camelot
+            tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
+            txns, account_id, account_holder = [], "", ""
+            for table in tables:
+                for _, row in table.df.iterrows():
+                    cells = [str(c).strip() for c in row]
+                    if _is_header(cells):
+                        continue
+                    txn = _parse_row(cells, account_id, account_holder, file_hash)
+                    if txn:
+                        txns.append(txn)
+            if len(txns) >= 3:
+                logger.info("Bandhan: camelot extracted %d transactions", len(txns))
+                return txns, []
+        except Exception as e:
+            logger.debug("Bandhan camelot failed: %s", e)
+    else:
+        logger.info("Large PDF (%d pages). Skipping Camelot in Bandhan parser.", page_count)
 
     try:
         from parsers.table_reconstruction import detect_column_bands, reconstruct_rows

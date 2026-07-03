@@ -27,31 +27,36 @@ def _make_hash(account_id: str, date: datetime, amount: Decimal, narration: str)
     ).hexdigest()
 
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
-    # Pre-extract account info from the first page text
+    # Pre-extract account info from the first page header text first
     account_id, account_holder = "", ""
+    page_count = 1
     try:
         with pdfplumber.open(file_path) as pdf:
+            page_count = len(pdf.pages)
             if pdf.pages:
                 header_text = pdf.pages[0].extract_text() or ""
                 account_id, account_holder = _extract_account_info(header_text)
     except Exception as e:
         logger.debug("SBI pre-extract account info failed: %s", e)
 
-    # Try camelot lattice first
-    try:
-        import camelot
-        tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
-        all_rows = []
-        for table in tables:
-            for _, row in table.df.iterrows():
-                cells = [str(c).strip() for c in row]
-                if not _is_header_row([c.lower() for c in cells]):
-                    all_rows.append(cells)
-        txns = _normalize_sbi_rows(all_rows, file_path, account_id, account_holder)
-        if txns:
-            return txns
-    except Exception as e:
-        logger.debug("SBI camelot failed: %s", e)
+    # Try camelot lattice first (skip for large files to avoid memory lockups)
+    if page_count <= 20:
+        try:
+            import camelot
+            tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
+            all_rows = []
+            for table in tables:
+                for _, row in table.df.iterrows():
+                    cells = [str(c).strip() for c in row]
+                    if not _is_header_row([c.lower() for c in cells]):
+                        all_rows.append(cells)
+            txns = _normalize_sbi_rows(all_rows, file_path, account_id, account_holder)
+            if txns:
+                return txns
+        except Exception as e:
+            logger.debug("SBI camelot failed: %s", e)
+    else:
+        logger.info("Large PDF (%d pages). Skipping Camelot in SBI parser.", page_count)
 
     # Fall back to pdfplumber stream mode
     txns = []

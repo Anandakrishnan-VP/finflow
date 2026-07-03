@@ -63,13 +63,24 @@ def _parse_row(cells, account_id, account_holder, file_path):
 
 async def parse_pdf(file_path: str) -> list[UniversalTransaction]:
     txns = []
+    page_count = 1
     try:
-        import camelot
-        tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
-        rows = [list(map(str, r)) for t in tables for _, r in t.df.iterrows() if not _is_header(list(map(str, r)))]
-        txns = [t for r in rows for t in [_parse_row(r, "", "", file_path)] if t]
-        if txns: return txns
-    except Exception: pass
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            page_count = len(pdf.pages)
+    except Exception:
+        pass
+
+    if page_count <= 20:
+        try:
+            import camelot
+            tables = camelot.read_pdf(file_path, pages="all", flavor="lattice")
+            rows = [list(map(str, r)) for t in tables for _, r in t.df.iterrows() if not _is_header(list(map(str, r)))]
+            txns = [t for r in rows for t in [_parse_row(r, "", "", file_path)] if t]
+            if txns: return txns
+        except Exception: pass
+    else:
+        logger.info("Large PDF (%d pages). Skipping Camelot in Kotak parser.", page_count)
     try:
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:

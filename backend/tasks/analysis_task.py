@@ -50,6 +50,15 @@ async def _run_analysis_pipeline(task_self, case_id: str, task_id: str):
 
     try:
         await _run_analysis_pipeline_core(task_self, case_id, task_id, Session)
+    except Exception as e:
+        async with Session() as db:
+            from sqlalchemy import text
+            await db.execute(
+                text("UPDATE cases SET status='ANALYSIS_FAILED', updated_at=NOW() WHERE id=:cid"),
+                {"cid": case_id}
+            )
+            await db.commit()
+        raise
     finally:
         if engine:
             await engine.dispose()
@@ -91,9 +100,9 @@ async def _run_analysis_pipeline_core(task_self, case_id: str, task_id: str, Ses
         # Bulk update counterparty enrichment data
         update_data = [
             {
-                "cacc": t.counterparty_account,
-                "cname": t.counterparty_name,
-                "cbank": t.counterparty_bank,
+                "cacc": t.counterparty_account[:255] if t.counterparty_account else None,
+                "cname": t.counterparty_name[:200] if t.counterparty_name else None,
+                "cbank": t.counterparty_bank[:100] if t.counterparty_bank else None,
                 "hash": t.txn_hash
             }
             for t in transactions
@@ -685,7 +694,7 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
                               txn_date, amount, txn_type, balance_after, narration,
                               counterparty_account, counterparty_name, counterparty_bank, chain_hash)
                               VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn,:cpb,:ch)
-                              ON CONFLICT (txn_hash) DO NOTHING"""),
+                              ON CONFLICT (statement_id, txn_hash) DO NOTHING"""),
                         chunk
                     )
                 except Exception as ex:
