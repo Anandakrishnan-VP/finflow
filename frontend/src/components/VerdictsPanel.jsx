@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 
 const TIER_COLORS = {
@@ -72,9 +73,9 @@ export default function VerdictsPanel({ caseId }) {
     <div className="space-y-6">
       <div className="flex justify-between items-center flex-wrap gap-2">
         <div>
-          <h2 className="text-base font-semibold text-ink-primary">Consolidated Risk Verdicts</h2>
+          <h2 className="text-base font-bold text-ink-primary">Suspect & Verdict Profiles</h2>
           <p className="text-xs text-ink-muted mt-0.5">
-            Cross-validation of statistical rules, graph GDS, and blind LLM second opinions.
+            A comprehensive list of suspect accounts detected in statements with cross-validated GDS risk scores, and AI blind auditing.
           </p>
         </div>
         <button
@@ -97,17 +98,27 @@ export default function VerdictsPanel({ caseId }) {
             >
               {/* Card Header */}
               <div className="px-5 py-4 border-b border-border-hairline bg-surface-sunken/40 flex flex-wrap gap-4 items-center justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm font-semibold text-ink-primary">
-                      {v.account_id}
+                <div className="space-y-1 text-left">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="text-sm font-bold text-ink-primary">
+                      {v.account_holder || 'Unnamed Suspect'}
                     </span>
-                    <span className={`text-[10px] font-bold tracking-wider px-2.5 py-0.5 rounded-full uppercase ${TIER_COLORS[v.agreement_tier] || 'bg-surface-sunken text-ink-secondary border border-border-hairline'}`}>
+                    <span className="text-xs text-ink-muted">|</span>
+                    <Link
+                      to={`/cases/${caseId}/suspects/${v.account_id}`}
+                      className="font-mono text-xs font-semibold text-accent hover:text-accent-hover hover:underline transition-colors bg-accent/5 px-2 py-0.5 rounded border border-accent/15"
+                    >
+                      {v.account_id}
+                    </Link>
+                    <span className={`text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-full uppercase ${TIER_COLORS[v.agreement_tier] || 'bg-surface-sunken text-ink-secondary border border-border-hairline'}`}>
                       {v.agreement_tier.replace(/_/g, ' ')}
                     </span>
                   </div>
-                  <div className="text-[11px] text-ink-secondary font-medium">
-                    {v.tier_label}
+
+                  <div className="text-[10px] text-ink-muted font-mono uppercase tracking-wider flex items-center gap-2">
+                    <span>{v.bank_name || 'Unknown Bank'}</span>
+                    <span>•</span>
+                    <span className="text-accent font-semibold">{v.role_label} ({v.tier_label})</span>
                   </div>
                 </div>
 
@@ -125,7 +136,7 @@ export default function VerdictsPanel({ caseId }) {
               </div>
 
               {/* Card Body */}
-              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
                 {/* Left side: breakdown bars */}
                 <div className="space-y-3.5">
                   <h4 className="text-xs font-semibold text-ink-primary uppercase tracking-wider mb-2">Signal Breakdown</h4>
@@ -194,18 +205,35 @@ export default function VerdictsPanel({ caseId }) {
                     )}
                   </div>
 
-                  {isLlmReviewed && (
+                  {isLlmReviewed ? (
                     <div className="mt-4 pt-3 border-t border-border-hairline flex items-center justify-between">
                       <span className="text-[10px] text-ink-muted">
                         Audited: {v.reviewed_at ? new Date(v.reviewed_at).toLocaleString() : '—'}
                       </span>
-                      <button
-                        disabled={runningOpinion[v.account_id]}
-                        onClick={() => triggerSecondOpinion(v.account_id)}
-                        className="text-[11px] text-accent hover:text-accent-hover font-bold transition-colors"
+                      <div className="flex items-center gap-3">
+                        <button
+                          disabled={runningOpinion[v.account_id]}
+                          onClick={() => triggerSecondOpinion(v.account_id)}
+                          className="text-[11px] text-ink-secondary hover:text-ink-primary font-semibold transition-colors"
+                        >
+                          {runningOpinion[v.account_id] ? 'Auditing...' : 'Re-run AI Audit'}
+                        </button>
+                        <Link
+                          to={`/cases/${caseId}/suspects/${v.account_id}`}
+                          className="text-[11px] text-accent hover:text-accent-hover font-bold transition-colors uppercase tracking-wider flex items-center gap-1"
+                        >
+                          View Suspect Profile →
+                        </Link>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 pt-3 border-t border-border-hairline/40 flex justify-end">
+                      <Link
+                        to={`/cases/${caseId}/suspects/${v.account_id}`}
+                        className="text-[11px] text-accent hover:text-accent-hover font-bold transition-colors uppercase tracking-wider flex items-center gap-1"
                       >
-                        {runningOpinion[v.account_id] ? 'Auditing...' : 'Re-run AI Audit'}
-                      </button>
+                        View Suspect Profile →
+                      </Link>
                     </div>
                   )}
                 </div>
@@ -213,6 +241,7 @@ export default function VerdictsPanel({ caseId }) {
             </div>
           );
         })}
+
 
         {verdicts.length === 0 && (
           <div className="text-center py-12 border border-dashed border-border rounded-lg bg-surface-sunken/40">

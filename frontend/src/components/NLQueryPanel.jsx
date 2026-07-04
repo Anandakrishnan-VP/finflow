@@ -1,5 +1,27 @@
 import { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
+
+// Helper to render account IDs as clickable router Link badges
+const renderMessageContent = (text, caseId) => {
+  if (!text) return '';
+  const regex = /\b(ACC-[A-Za-z0-9\-]+|STATEMENT-[A-Za-z0-9\-]+|[A-Za-z0-9_\.\-]{2,}@[A-Za-z0-9_\.\-]{2,})\b/g;
+  const parts = text.split(regex);
+  return parts.map((part, index) => {
+    if (part.includes('@') || part.startsWith('ACC-') || part.startsWith('STATEMENT-')) {
+      return (
+        <Link
+          key={index}
+          to={`/cases/${caseId}/suspects/${part}`}
+          className="text-accent hover:underline font-mono bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded text-[10px] font-bold mx-0.5 inline-block align-middle"
+        >
+          {part}
+        </Link>
+      );
+    }
+    return part;
+  });
+};
 
 export default function NLQueryPanel({ caseId }) {
   const [subTab, setSubTab] = useState('chat'); // 'chat' | 'search'
@@ -118,7 +140,9 @@ export default function NLQueryPanel({ caseId }) {
                   }`}
                 >
                   {msg.content.split('\n').map((line, lIdx) => (
-                    <p key={lIdx} className={lIdx > 0 ? 'mt-1' : ''}>{line}</p>
+                    <p key={lIdx} className={lIdx > 0 ? 'mt-1' : ''}>
+                      {renderMessageContent(line, caseId)}
+                    </p>
                   ))}
                 </div>
               </div>

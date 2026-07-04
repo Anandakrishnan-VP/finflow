@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 
-export default function ProgressBar({ taskId, onComplete }) {
+export default function ProgressBar({ taskId, onComplete, onFailure }) {
   const { progress, stage, status, error } = useWebSocket(taskId);
 
   useEffect(() => {
     if (status === 'complete' && onComplete) onComplete();
+    if (status === 'failed' && onFailure) onFailure();
   }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

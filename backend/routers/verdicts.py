@@ -26,17 +26,24 @@ async def get_case_verdicts(
     """
     result = await db.execute(
         text("""
-            SELECT account_id, composite_score, score_breakdown, algo_verdict,
-                   llm_verdict, llm_confidence, llm_reasoning, agreement_tier,
-                   tier_label, review_priority, reviewed_at, role_label
-            FROM account_verdicts
-            WHERE case_id = :cid
-            ORDER BY review_priority ASC, composite_score DESC
+            SELECT v.account_id, v.composite_score, v.score_breakdown, v.algo_verdict,
+                   v.llm_verdict, v.llm_confidence, v.llm_reasoning, v.agreement_tier,
+                   v.tier_label, v.review_priority, v.reviewed_at, v.role_label,
+                   s.account_holder, s.bank_name
+            FROM account_verdicts v
+            LEFT JOIN (
+                SELECT DISTINCT ON (account_id) account_id, account_holder, bank_name
+                FROM statements
+                WHERE case_id = :cid
+            ) s ON v.account_id = s.account_id
+            WHERE v.case_id = :cid
+            ORDER BY v.review_priority ASC, v.composite_score DESC
         """),
         {"cid": case_id},
     )
     rows = result.fetchall()
     return [dict(r._mapping) for r in rows]
+
 
 
 @router.get("/{case_id}/benford")
@@ -138,6 +145,10 @@ async def trigger_second_opinion(
     # 4. Fuse verdicts
     fused = fuse_verdict(algo_verdict, llm_verdict)
 
+    new_role_label = role_label
+    if role_label == "CLEAR" and llm_verdict == "SUSPICIOUS":
+        new_role_label = "SUSPECT"
+
     # 5. Save back to database
     await db.execute(
         text("""
@@ -148,6 +159,7 @@ async def trigger_second_opinion(
                 agreement_tier = :tier,
                 tier_label = :label,
                 review_priority = :prio,
+                role_label = :role,
                 reviewed_at = NOW()
             WHERE case_id = :cid AND account_id = :aid
         """),
@@ -160,6 +172,7 @@ async def trigger_second_opinion(
             "tier": fused["agreement_tier"],
             "label": fused["tier_label"],
             "prio": fused["review_priority"],
+            "role": new_role_label,
         },
     )
     await db.commit()
@@ -173,5 +186,5 @@ async def trigger_second_opinion(
         "agreement_tier": fused["agreement_tier"],
         "tier_label": fused["tier_label"],
         "review_priority": fused["review_priority"],
-        "role_label": role_label,
+        "role_label": new_role_label,
     }

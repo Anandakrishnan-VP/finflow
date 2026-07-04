@@ -231,6 +231,10 @@ async def _run_analysis_pipeline_core(task_self, case_id: str, task_id: str, Ses
                 conf = "MEDIUM"
                 band = {}
 
+            role_lbl = res["role_label"]
+            if role_lbl == "CLEAR" and llm_verdict == "SUSPICIOUS":
+                role_lbl = "SUSPECT"
+
             verdict_rows.append({
                 "account_id": account_id,
                 "composite_score": res["composite_score"],
@@ -242,7 +246,7 @@ async def _run_analysis_pipeline_core(task_self, case_id: str, task_id: str, Ses
                 "agreement_tier": fused["agreement_tier"],
                 "tier_label": fused["tier_label"],
                 "review_priority": fused["review_priority"],
-                "role_label": res["role_label"],
+                "role_label": role_lbl,
                 "lof_score": lof_s,
                 "lgbm_score": lgbm_s,
                 "score_confidence": conf,

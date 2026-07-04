@@ -19,12 +19,12 @@ import HypothesisEngine from '../components/HypothesisEngine';
 
 const TABS = [
   'Executive Summary', 'Overview', 'Upload', 'Transactions', 
-  'Alerts', 'Verdicts', 'Graph', 'Money Trail', 'Entities', 
+  'Alerts', 'Suspects', 'Graph', 'Money Trail', 'Entities', 
   'Ask AI', 'Reports', 'Hypothesis'
 ];
 
 const ANALYSIS_REQUIRED_TABS = [
-  'Executive Summary', 'Alerts', 'Verdicts', 'Graph', 
+  'Executive Summary', 'Alerts', 'Suspects', 'Graph', 
   'Money Trail', 'Ask AI', 'Reports', 'Hypothesis'
 ];
 
@@ -222,12 +222,18 @@ export default function CaseDetailPage() {
               Forensic Engines & ML Models Running
             </span>
           </div>
-          <ProgressBar taskId={taskId} onComplete={() => { 
-            loadSummary(); 
-            loadCase(); 
-            loadStatements();
-            setTaskId(null); 
-          }} />
+          <ProgressBar 
+            taskId={taskId} 
+            onComplete={() => { 
+              loadSummary(); 
+              loadCase(); 
+              loadStatements();
+              setTaskId(null); 
+            }} 
+            onFailure={() => {
+              localStorage.removeItem(`finflow_task_${caseId}`);
+            }}
+          />
         </div>
       )}
 
@@ -348,7 +354,7 @@ export default function CaseDetailPage() {
           {activeTab === 'Upload'       && <UploadPanel caseId={caseId} onUploaded={handleUploaded} />}
           {activeTab === 'Transactions' && <TransactionsTable caseId={caseId} />}
           {activeTab === 'Alerts'       && <AlertsTable caseId={caseId} />}
-          {activeTab === 'Verdicts'     && <VerdictsPanel caseId={caseId} />}
+          {activeTab === 'Suspects'     && <VerdictsPanel caseId={caseId} />}
           {activeTab === 'Graph'        && <GraphView caseId={caseId} />}
           {activeTab === 'Money Trail'  && <MoneyTrailTable caseId={caseId} />}
           {activeTab === 'Entities'     && <EntitiesPanel caseId={caseId} />}

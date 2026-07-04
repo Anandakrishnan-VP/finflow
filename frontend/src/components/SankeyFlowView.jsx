@@ -7,6 +7,37 @@ import { useTheme } from '../contexts/ThemeContext';
 const WIDTH = 900;
 const HEIGHT = 520;
 
+function makeAcyclic(nodesCount, links) {
+  const adj = Array.from({ length: nodesCount }, () => []);
+  links.forEach((link, idx) => {
+    adj[link.source].push({ target: link.target, idx });
+  });
+
+  const visited = new Uint8Array(nodesCount); // 0: unvisited, 1: visiting, 2: visited
+  const backEdges = new Set();
+
+  function dfs(u) {
+    visited[u] = 1;
+    for (const edge of adj[u]) {
+      const v = edge.target;
+      if (visited[v] === 1) {
+        backEdges.add(edge.idx);
+      } else if (visited[v] === 0) {
+        dfs(v);
+      }
+    }
+    visited[u] = 2;
+  }
+
+  for (let i = 0; i < nodesCount; i++) {
+    if (visited[i] === 0) {
+      dfs(i);
+    }
+  }
+
+  return links.filter((_, idx) => !backEdges.has(idx));
+}
+
 export default function SankeyFlowView({ caseId, minAmount }) {
   const svgRef = useRef(null);
   const [data, setData] = useState(null);
@@ -47,25 +78,13 @@ export default function SankeyFlowView({ caseId, minAmount }) {
     try {
       graph = generator({
         nodes: sankeyNodes.map((d) => ({ ...d })),
-        links: sankeyLinks,
+        links: sankeyLinks.map((l) => ({ ...l })),
       });
     } catch (e) {
-      // d3-sankey throws on true cycles (round-trip money creates A->B->A).
-      // Break cycles by dropping the smallest-value link in any detected loop —
-      // the underlying CIRCULAR_FLOW alert and Hypothesis Engine already cover
-      // tracing the exact loop; the Sankey only needs to render a DAG view.
-      const linksSortedByValue = [...sankeyLinks].sort((a, b) => a.value - b.value);
-      const seen = new Set();
-      const acyclic = [];
-      for (const link of linksSortedByValue) {
-        const key = `${link.target}->${link.source}`;
-        if (seen.has(key)) continue;
-        seen.add(`${link.source}->${link.target}`);
-        acyclic.push(link);
-      }
+      const acyclicLinks = makeAcyclic(sankeyNodes.length, sankeyLinks);
       graph = generator({
         nodes: sankeyNodes.map((d) => ({ ...d })),
-        links: acyclic,
+        links: acyclicLinks.map((l) => ({ ...l })),
       });
     }
 

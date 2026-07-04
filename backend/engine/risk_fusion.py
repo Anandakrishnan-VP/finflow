@@ -105,6 +105,12 @@ def compute_role_label(
     if (in_degree >= 3 and out_degree >= 1 and composite_score >= 40) or (betweenness >= 0.4 and composite_score >= 40):
         return "AGGREGATOR"
 
+    # Default to SUSPECT if watchlist hit or high composite score
+    if any("WATCHLIST_HIT" in f for f in all_flags):
+        return "SUSPECT"
+    if composite_score >= 40:
+        return "SUSPECT"
+
     # Default to CLEAR
     return "CLEAR"
 

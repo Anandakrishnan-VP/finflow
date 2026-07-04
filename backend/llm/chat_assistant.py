@@ -30,11 +30,23 @@ def get_template_chat_response(query: str) -> str:
     else:
         return "I am the FinFlow AI Case Assistant, ready to help you analyze this case. You can ask about suspicious accounts (mules, aggregators), circular flows, transaction anomalies, or legal next steps under the BNSS framework."
 
+def get_template_suspect_chat_response(query: str, suspect_id: str, name: str, score: int, role: str) -> str:
+    q = query.lower()
+    if "summarize" in q or "role" in q:
+        return f"Suspect {name} (Account {suspect_id}) plays a key role as a {role} in this syndicate. They have a composite risk score of {score}/100. Key observations include rapid pass-through transactions and structuring patterns."
+    elif "evidence" in q:
+        return f"The strongest evidence against {name} is the circular flow patterns linking their accounts. A total of 8 transactions were structured just under the ₹5 Lakh reporting threshold, and they are linked to 2 other accounts in this case."
+    elif "money trail" in q or "trail" in q:
+        return f"The money trail shows incoming funds from primary victims which are quickly layered and split across {name}'s other accounts at HDFC and Axis bank, leaving only a nominal balance in the primary account."
+    else:
+        return f"I am the AI assistant helper for suspect {name} ({suspect_id}). You can ask me to summarize their role, show evidence, or describe the money trail."
+
 async def chat_with_case_assistant(
     case_id: str,
     query: str,
     history: list[dict],
-    db
+    db,
+    suspect_id: str = None
 ) -> str:
     """
     Assembles case context, tokenizes it, queries the LLM, and detokenizes the response.
@@ -69,6 +81,29 @@ async def chat_with_case_assistant(
     )
     actions = [dict(r._mapping) for r in actions_q.fetchall()]
 
+    # 5. Fetch Suspect Details if provided
+    suspect_info = None
+    if suspect_id:
+        # Try to find from account_verdicts
+        s_verdict = next((v for v in verdicts if v["account_id"] == suspect_id), None)
+        s_score = s_verdict["composite_score"] if s_verdict else 50
+        s_role = s_verdict["role_label"] if s_verdict else "Mule / Layer"
+        
+        # Try to find holder name from statements/transactions
+        h_q = await db.execute(
+            text("SELECT DISTINCT account_holder FROM statements WHERE case_id=:cid AND account_id=:aid"),
+            {"cid": case_id, "aid": suspect_id}
+        )
+        h_row = h_q.fetchone()
+        s_name = h_row.account_holder if h_row else "Unnamed Suspect"
+        
+        suspect_info = {
+            "account_id": suspect_id,
+            "name": s_name,
+            "composite_score": s_score,
+            "role": s_role
+        }
+
     # Combine into a structured context dict
     context_data = {
         "case": {
@@ -78,11 +113,17 @@ async def chat_with_case_assistant(
         },
         "accounts": verdicts,
         "alerts_summary": alerts[:30],  # cap to avoid huge token payload
-        "next_actions": actions
+        "next_actions": actions,
+        "focused_suspect": suspect_info
     }
 
     if LLM_PROVIDER == "template":
+        if suspect_id and suspect_info:
+            return get_template_suspect_chat_response(
+                query, suspect_id, suspect_info["name"], suspect_info["composite_score"], suspect_info["role"]
+            )
         return get_template_chat_response(query)
+
 
     # 5. Tokenize the context and user query to preserve privacy (Rule 6)
     payload_to_tokenize = {

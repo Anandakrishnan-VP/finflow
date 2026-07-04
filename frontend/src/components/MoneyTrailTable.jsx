@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 
 export default function MoneyTrailTable({ caseId }) {
@@ -31,7 +32,16 @@ export default function MoneyTrailTable({ caseId }) {
                   {t.days_held}d
                 </span>
               </td>
-              <td className="px-4 py-2 font-mono text-ink-secondary">{t.counterparty_account || '—'}</td>
+              <td className="px-4 py-2 font-mono text-ink-secondary">
+                {t.counterparty_account ? (
+                  <Link
+                    to={`/cases/${caseId}/suspects/${t.counterparty_account}`}
+                    className="text-accent hover:underline hover:text-accent-hover font-semibold transition-colors"
+                  >
+                    {t.counterparty_account}
+                  </Link>
+                ) : '—'}
+              </td>
             </tr>
           ))}
           {trail.length === 0 && (

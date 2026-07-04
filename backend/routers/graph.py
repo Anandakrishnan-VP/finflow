@@ -31,6 +31,15 @@ async def get_communities(case_id: str, current_user=Depends(get_current_user)):
     results = await run_graph_algorithms(case_id)
     return {"communities": results.get("communities", {})}
 
+@router.get("/{case_id}/graph/patterns")
+async def get_patterns(
+    case_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from graph.pattern_insights import derive_case_patterns
+    return await derive_case_patterns(case_id, db)
+
 @router.post("/{case_id}/graph/explain")
 async def explain_graph(
     case_id: str,

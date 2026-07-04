@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import RiskBadge from './RiskBadge';
 
@@ -51,7 +52,14 @@ export default function AlertsTable({ caseId }) {
         <tbody>
           {filtered.map((a, i) => (
             <tr key={i} className="border-t border-border-hairline odd:bg-surface-base even:bg-surface-raised">
-              <td className="px-4 py-2 font-mono text-ink-primary">{a.account_id}</td>
+              <td className="px-4 py-2 font-mono text-ink-primary">
+                <Link
+                  to={`/cases/${caseId}/suspects/${a.account_id}`}
+                  className="text-accent hover:underline hover:text-accent-hover font-semibold transition-colors"
+                >
+                  {a.account_id}
+                </Link>
+              </td>
               <td className="px-4 py-2">
                 <RiskBadge
                   tier={getSeverity(a.flag)}

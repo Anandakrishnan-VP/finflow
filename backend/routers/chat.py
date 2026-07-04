@@ -4,6 +4,8 @@ from database import get_db
 from security.auth import get_current_user
 from llm.chat_assistant import chat_with_case_assistant
 
+from typing import Optional
+
 router = APIRouter(prefix="/cases", tags=["chat"])
 
 @router.post("/{case_id}/chat")
@@ -11,6 +13,7 @@ async def chat_case_assistant(
     case_id: str,
     message: str = Body(..., embed=True),
     history: list[dict] = Body([], embed=True),
+    suspect_id: Optional[str] = Body(None, embed=True),
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -19,7 +22,8 @@ async def chat_case_assistant(
     Returns the assistant's response.
     """
     try:
-        response = await chat_with_case_assistant(case_id, message, history, db)
+        response = await chat_with_case_assistant(case_id, message, history, db, suspect_id)
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Assistant error: {str(e)}")
+

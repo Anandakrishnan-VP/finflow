@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import CaseDetailPage from './pages/CaseDetailPage';
+import SuspectProfilePage from './pages/SuspectProfilePage';
 import WatchlistPage from './pages/WatchlistPage';
 import AdminPage from './pages/AdminPage';
 import NotFoundPage from './pages/NotFoundPage';
@@ -30,6 +31,12 @@ export default function App() {
             <Route path="/cases/:caseId" element={
               <ProtectedRoute><Layout><CaseDetailPage /></Layout></ProtectedRoute>
             } />
+            <Route path="/cases/:caseId/suspects/:accountId" element={
+              <ProtectedRoute><Layout><SuspectProfilePage /></Layout></ProtectedRoute>
+            } />
+            <Route path="/case/:caseId/suspect/:accountId" element={
+              <ProtectedRoute><Layout><SuspectProfilePage /></Layout></ProtectedRoute>
+            } />
             <Route path="/watchlist" element={
               <ProtectedRoute><Layout><WatchlistPage /></Layout></ProtectedRoute>
             } />
@@ -43,3 +50,4 @@ export default function App() {
     </ThemeProvider>
   );
 }
+

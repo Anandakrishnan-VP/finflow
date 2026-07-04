@@ -1,5 +1,43 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
+
+// Helper to render account IDs as clickable router Link badges
+const renderMessageContent = (text, caseId) => {
+  if (!text) return '';
+  const regex = /\b(ACC-[A-Za-z0-9\-]+|STATEMENT-[A-Za-z0-9\-]+|[A-Za-z0-9_\.\-]{2,}@[A-Za-z0-9_\.\-]{2,})\b/g;
+  const parts = text.split(regex);
+  return parts.map((part, index) => {
+    if (part.includes('@') || part.startsWith('ACC-') || part.startsWith('STATEMENT-')) {
+      return (
+        <Link
+          key={index}
+          to={`/cases/${caseId}/suspects/${part}`}
+          className="text-accent hover:underline font-mono bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded text-[10px] font-bold mx-0.5 inline-block align-middle"
+        >
+          {part}
+        </Link>
+      );
+    }
+    return part;
+  });
+};
+
+const FACTOR_LABELS = {
+  watchlist_hit: 'Watchlist Hit (Max 25 pts)',
+  rule_severity: 'Rule Engine Flags (Max 20 pts)',
+  isolation_forest: 'ML Anomaly Score (Max 20 pts)',
+  taint_propagation: 'Risk Taint Propagation (Max 20 pts)',
+  betweenness: 'Network Centrality (Max 15 pts)',
+};
+
+const FACTOR_COLORS = {
+  watchlist_hit: 'bg-risk-high',
+  rule_severity: 'bg-risk-medium',
+  isolation_forest: 'bg-accent',
+  taint_propagation: 'bg-accent/80',
+  betweenness: 'bg-ink-secondary',
+};
 
 export default function ExecutiveSummaryPanel({ caseId }) {
   const [summary, setSummary] = useState(null);
@@ -7,6 +45,7 @@ export default function ExecutiveSummaryPanel({ caseId }) {
   const [nextActions, setNextActions] = useState([]);
   const [syndicates, setSyndicates] = useState([]);
   const [annotations, setAnnotations] = useState([]);
+  const [expandedSuspect, setExpandedSuspect] = useState({});
   
   // Custom Action inputs
   const [newActionAccount, setNewActionAccount] = useState('');
@@ -57,6 +96,13 @@ export default function ExecutiveSummaryPanel({ caseId }) {
 
   const fetchAnnotations = () => {
     apiClient.get(`/cases/${caseId}/annotations`).then(r => setAnnotations(r.data || []));
+  };
+
+  const toggleExpandSuspect = (accountId) => {
+    setExpandedSuspect(prev => ({
+      ...prev,
+      [accountId]: !prev[accountId]
+    }));
   };
 
   // Next Actions handlers
@@ -188,10 +234,225 @@ export default function ExecutiveSummaryPanel({ caseId }) {
       {/* Main Grid Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Left/Middle Column - Checklist, Syndicates, Annotations */}
+        {/* Left Column - Suspects, Syndicate overlaps, Annotations */}
         <div className="lg:col-span-2 space-y-6">
           
-          {/* 1. Next Actions Checklist */}
+          {/* Suspect Risk & Evidence Command Center */}
+          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card space-y-4">
+            <div>
+              <h3 className="text-base font-bold text-ink-primary">Primary Suspect Profiles & Evidence</h3>
+              <p className="text-xs text-ink-muted mt-0.5">Identified suspects and their algorithmic & LLM-resolved risk indicators.</p>
+            </div>
+
+            <div className="space-y-3">
+              {[...verdicts]
+                .sort((a, b) => b.composite_score - a.composite_score)
+                .map((v) => {
+                  const isExpanded = !!expandedSuspect[v.account_id];
+                  const breakdown = v.score_breakdown || {};
+                  
+                  // Pick colors based on composite score
+                  let scoreColor = 'text-risk-high bg-risk-high-bg border-risk-high/20';
+                  let barColor = 'bg-risk-high';
+                  if (v.composite_score < 40) {
+                    scoreColor = 'text-accent bg-accent-subtle border-accent/20';
+                    barColor = 'bg-accent';
+                  } else if (v.composite_score < 75) {
+                    scoreColor = 'text-risk-medium bg-risk-medium-bg border-risk-medium/20';
+                    barColor = 'bg-risk-medium';
+                  }
+
+                  return (
+                    <div 
+                      key={v.account_id}
+                      className="border border-border-hairline rounded-xl overflow-hidden bg-surface-sunken/20 hover:bg-surface-sunken/40 hover:border-border transition-all duration-200"
+                    >
+                      {/* Summary Row */}
+                      <div 
+                        onClick={() => toggleExpandSuspect(v.account_id)}
+                        className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer select-none"
+                      >
+                        <div className="flex-1 space-y-1 text-left">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${v.composite_score >= 75 ? 'animate-pulse bg-risk-high' : v.composite_score >= 40 ? 'bg-risk-medium' : 'bg-accent'}`} />
+                            <span className="text-xs font-bold text-ink-primary">
+                              {v.account_holder || 'Unnamed Suspect'}
+                            </span>
+                            <span className="text-xs text-ink-muted">|</span>
+                            <Link
+                              to={`/cases/${caseId}/suspects/${v.account_id}`}
+                              onClick={(e) => e.stopPropagation()} // Prevent expand toggle when clicking link
+                              className="font-mono text-[11px] font-semibold text-accent hover:text-accent-hover hover:underline transition-colors bg-accent/5 px-2 py-0.5 rounded border border-accent/15"
+                            >
+                              {v.account_id}
+                            </Link>
+                            <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded border ${scoreColor}`}>
+                              {v.tier_label || 'Suspect'}
+                            </span>
+                            {v.bank_name && (
+                              <span className="text-[10px] text-ink-muted font-mono uppercase">
+                                ({v.bank_name})
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-ink-secondary leading-relaxed line-clamp-2 mt-1">
+                            <b>AI Summary:</b> {v.llm_reasoning || 'No forensic reasoning generated yet. Click to view breakdown.'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-4 self-end md:self-auto shrink-0">
+                          <div className="text-right">
+                            <span className="text-[9px] text-ink-muted uppercase font-bold tracking-wider block">Risk Score</span>
+                            <span className="font-data font-black text-sm text-ink-primary">{v.composite_score}/100</span>
+                          </div>
+                          
+                          {/* Mini visual indicator */}
+                          <div className="w-12 bg-surface-sunken rounded-full h-1.5 overflow-hidden border border-border-hairline">
+                            <div className={`h-full ${barColor}`} style={{ width: `${v.composite_score}%` }} />
+                          </div>
+
+                          <span className={`text-ink-muted text-xs transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
+                            ▼
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Expanded Signal Breakdown */}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-2 border-t border-border-hairline bg-surface-sunken/30 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Breakdown factor bars */}
+                          <div className="space-y-2">
+                            <span className="text-[9px] uppercase font-bold text-ink-muted tracking-wider block mb-1">Risk Factors</span>
+                            {Object.entries(FACTOR_LABELS).map(([key, label]) => {
+                              const value = breakdown[key] || 0.0;
+                              const maxVal = key === 'watchlist_hit' ? 25 : key === 'betweenness' ? 15 : 20;
+                              const pct = Math.min(100, (value / maxVal) * 100);
+                              return (
+                                <div key={key} className="space-y-0.5">
+                                  <div className="flex justify-between text-[10px] font-semibold">
+                                    <span className="text-ink-secondary">{label}</span>
+                                    <span className="text-ink-primary font-bold">{value} pts</span>
+                                  </div>
+                                  <div className="w-full bg-surface-sunken rounded-full h-1 overflow-hidden">
+                                    <div
+                                      className={`${FACTOR_COLORS[key] || 'bg-accent'} h-full rounded-full`}
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Full description / reasoning & links */}
+                          <div className="flex flex-col justify-between space-y-3 pl-0 md:pl-4 border-l border-border-hairline/50">
+                            <div className="space-y-1.5">
+                              <span className="text-[9px] uppercase font-bold text-ink-muted tracking-wider block">Full Forensic Justification</span>
+                              <p className="text-[11px] text-ink-secondary leading-relaxed italic bg-surface-sunken/60 border border-border-hairline p-2.5 rounded-lg">
+                                "{v.llm_reasoning || 'No second opinion generated yet.'}"
+                              </p>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] pt-1">
+                              <span className="text-ink-muted">Consensus: <b className="text-ink-primary">{v.agreement_tier.replace(/_/g, ' ')}</b></span>
+                              <Link 
+                                to={`/cases/${caseId}/suspects/${v.account_id}`}
+                                className="text-accent hover:underline font-bold"
+                              >
+                                Go to Suspect 360 Profile →
+                              </Link>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+              {verdicts.length === 0 && (
+                <div className="text-center py-8 border border-dashed border-border rounded-xl bg-surface-sunken/10">
+                  <p className="text-xs text-ink-muted italic">No suspect verdicts found. Please run statement analysis.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Cross-Case Syndicate Overlaps */}
+          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
+            <div className="font-bold text-ink-primary text-base mb-4 border-b border-border-hairline pb-2">Multi-Case Syndicate Overlaps</div>
+            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+              {syndicates.length === 0 ? (
+                <div className="text-xs text-ink-muted italic py-4">No cross-case identifier matches detected for this case.</div>
+              ) : (
+                syndicates.map((syn, idx) => (
+                  <div key={idx} className="p-3 bg-risk-high-bg border border-risk-high/15 rounded-xl flex justify-between items-start gap-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider bg-risk-high/15 text-risk-high px-2 py-0.5 rounded-full border border-risk-high/10">
+                          {syn.match_type} MATCH
+                        </span>
+                        <span className="text-xs font-semibold text-ink-primary">{syn.matched_value}</span>
+                      </div>
+                      <p className="text-xs text-ink-secondary mt-1">{syn.details}</p>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] text-ink-muted uppercase tracking-wider font-semibold">Overlapping Case</div>
+                      <div className="text-xs font-bold text-ink-primary mt-0.5">{syn.matched_case_title}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Case Annotations and Notes */}
+          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
+            <div className="font-bold text-ink-primary text-base mb-4 border-b border-border-hairline pb-2">Officer Notes & Annotations</div>
+            
+            <div className="space-y-3 max-h-60 overflow-y-auto pr-1 mb-4">
+              {annotations.length === 0 ? (
+                <div className="text-xs text-ink-muted italic py-4">No notes added yet — write your first case investigation note below.</div>
+              ) : (
+                annotations.map(note => (
+                  <div key={note.id} className="p-3 bg-surface-sunken/40 border border-border-hairline rounded-xl">
+                    <div className="flex justify-between items-center text-[10px] text-ink-muted font-semibold mb-1">
+                      <span>{note.username || 'System'}</span>
+                      <span className="font-data">{new Date(note.created_at).toLocaleString()}</span>
+                    </div>
+                    {note.account_id && (
+                      <span className="inline-block text-[9px] font-bold bg-accent-subtle text-accent border border-accent/20 px-1.5 py-0.5 rounded mb-1">
+                        ACCOUNT: {note.account_id}
+                      </span>
+                    )}
+                    <p className="text-xs text-ink-secondary whitespace-pre-wrap">{note.annotation}</p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <form onSubmit={handleAddAnnotation} className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Write general investigation note or update..."
+                className="flex-1 p-2 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
+                value={newAnnotation}
+                onChange={e => setNewAnnotation(e.target.value)}
+                required
+              />
+              <button
+                type="submit"
+                className="bg-accent hover:bg-accent-hover text-accent-fg text-xs px-4 rounded-md transition-colors font-semibold"
+              >
+                Save Note
+              </button>
+            </form>
+          </div>
+
+        </div>
+
+        {/* Right Column - Checklist & AI Case Assistant */}
+        <div className="space-y-6">
+          
+          {/* Next Actions Checklist */}
           <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
             <div className="font-bold text-ink-primary text-base mb-4 border-b border-border-hairline pb-2">Investigation Checklist</div>
             
@@ -262,124 +523,53 @@ export default function ExecutiveSummaryPanel({ caseId }) {
             </form>
           </div>
 
-          {/* 2. Cross-Case Syndicate overlap */}
-          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
-            <div className="font-bold text-ink-primary text-base mb-4 border-b border-border-hairline pb-2">Multi-Case Syndicate Overlaps</div>
-            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
-              {syndicates.length === 0 ? (
-                <div className="text-xs text-ink-muted italic py-4">No cross-case identifier matches detected for this case.</div>
-              ) : (
-                syndicates.map((syn, idx) => (
-                  <div key={idx} className="p-3 bg-risk-high-bg border border-risk-high/15 rounded-xl flex justify-between items-start gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider bg-risk-high/15 text-risk-high px-2 py-0.5 rounded-full border border-risk-high/10">
-                          {syn.match_type} MATCH
-                        </span>
-                        <span className="text-xs font-semibold text-ink-primary">{syn.matched_value}</span>
-                      </div>
-                      <p className="text-xs text-ink-secondary mt-1">{syn.details}</p>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[10px] text-ink-muted uppercase tracking-wider font-semibold">Overlapping Case</div>
-                      <div className="text-xs font-bold text-ink-primary mt-0.5">{syn.matched_case_title}</div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* 3. Case Annotations and Notes */}
-          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
-            <div className="font-bold text-ink-primary text-base mb-4 border-b border-border-hairline pb-2">Officer Notes & Annotations</div>
+          {/* Interactive AI Case Assistant */}
+          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card flex flex-col h-[520px]">
+            <div className="font-bold text-ink-primary text-base border-b border-border-hairline pb-2 mb-3">AI Case Assistant</div>
             
-            <div className="space-y-3 max-h-60 overflow-y-auto pr-1 mb-4">
-              {annotations.length === 0 ? (
-                <div className="text-xs text-ink-muted italic py-4">No notes added yet — write your first case investigation note below.</div>
-              ) : (
-                annotations.map(note => (
-                  <div key={note.id} className="p-3 bg-surface-sunken/40 border border-border-hairline rounded-xl">
-                    <div className="flex justify-between items-center text-[10px] text-ink-muted font-semibold mb-1">
-                      <span>{note.username || 'System'}</span>
-                      <span className="font-data">{new Date(note.created_at).toLocaleString()}</span>
-                    </div>
-                    {note.account_id && (
-                      <span className="inline-block text-[9px] font-bold bg-accent-subtle text-accent border border-accent/20 px-1.5 py-0.5 rounded mb-1">
-                        ACCOUNT: {note.account_id}
-                      </span>
-                    )}
-                    <p className="text-xs text-ink-secondary whitespace-pre-wrap">{note.annotation}</p>
+            {/* Chat message space */}
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-3 scrollbar-thin">
+              {chatMessages.map((msg, idx) => (
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-lg p-3 text-xs leading-relaxed shadow-sm
+                    ${msg.role === 'user' 
+                      ? 'bg-accent text-accent-fg rounded-tr-none' 
+                      : 'bg-surface-sunken text-ink-primary rounded-tl-none border border-border-hairline'}`}>
+                    {renderMessageContent(msg.content, caseId)}
                   </div>
-                ))
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-surface-sunken text-ink-muted rounded-lg rounded-tl-none p-3 text-xs border border-border-hairline italic animate-pulse">
+                    AI is studying case context...
+                  </div>
+                </div>
               )}
+              <div ref={chatEndRef} />
             </div>
 
-            <form onSubmit={handleAddAnnotation} className="flex gap-2">
+            {/* Send Input */}
+            <form onSubmit={handleSendMessage} className="flex gap-1.5 border-t border-border-hairline pt-3">
               <input
                 type="text"
-                placeholder="Write general investigation note or update..."
-                className="flex-1 p-2 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
-                value={newAnnotation}
-                onChange={e => setNewAnnotation(e.target.value)}
+                placeholder="Ask about mules, loops, legal actions..."
+                className="flex-1 p-2 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:ring-1 focus:ring-accent focus:border-accent outline-none"
+                value={chatInput}
+                onChange={e => setChatInput(e.target.value)}
+                disabled={chatLoading}
                 required
               />
               <button
                 type="submit"
-                className="bg-accent hover:bg-accent-hover text-accent-fg text-xs px-4 rounded-md transition-colors font-semibold"
+                disabled={chatLoading}
+                className="bg-accent hover:bg-accent-hover text-accent-fg text-xs font-semibold px-4 rounded-md transition-colors disabled:opacity-50"
               >
-                Save Note
+                Send
               </button>
             </form>
           </div>
 
-        </div>
-
-        {/* Right Column - Interactive AI Case Assistant */}
-        <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card flex flex-col h-[650px]">
-          <div className="font-bold text-ink-primary text-base border-b border-border-hairline pb-2 mb-3">AI Case Assistant</div>
-          
-          {/* Chat message space */}
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-3 scrollbar-thin">
-            {chatMessages.map((msg, idx) => (
-              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-lg p-3 text-xs leading-relaxed shadow-sm
-                  ${msg.role === 'user' 
-                    ? 'bg-accent text-accent-fg rounded-tr-none' 
-                    : 'bg-surface-sunken text-ink-primary rounded-tl-none border border-border-hairline'}`}>
-                  {msg.content}
-                </div>
-              </div>
-            ))}
-            {chatLoading && (
-              <div className="flex justify-start">
-                <div className="bg-surface-sunken text-ink-muted rounded-lg rounded-tl-none p-3 text-xs border border-border-hairline italic animate-pulse">
-                  AI is studying case context...
-                </div>
-              </div>
-            )}
-            <div ref={chatEndRef} />
-          </div>
-
-          {/* Send Input */}
-          <form onSubmit={handleSendMessage} className="flex gap-1.5 border-t border-border-hairline pt-3">
-            <input
-              type="text"
-              placeholder="Ask about mules, loops, legal actions..."
-              className="flex-1 p-2 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:ring-1 focus:ring-accent focus:border-accent outline-none"
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              disabled={chatLoading}
-              required
-            />
-            <button
-              type="submit"
-              disabled={chatLoading}
-              className="bg-accent hover:bg-accent-hover text-accent-fg text-xs font-semibold px-4 rounded-md transition-colors disabled:opacity-50"
-            >
-              Send
-            </button>
-          </form>
         </div>
 
       </div>

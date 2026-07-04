@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 
 export default function EntitiesPanel({ caseId }) {
@@ -13,9 +14,20 @@ export default function EntitiesPanel({ caseId }) {
           <div className="text-xs text-ink-muted mt-1.5">
             Linked accounts:{' '}
             <span className="font-mono text-ink-secondary font-medium">
-              {Array.isArray(e.linked_accounts) ? e.linked_accounts.join(', ') : '—'}
+              {Array.isArray(e.linked_accounts) ? e.linked_accounts.map((acc, idx) => (
+                <span key={acc}>
+                  {idx > 0 && ', '}
+                  <Link
+                    to={`/cases/${caseId}/suspects/${acc}`}
+                    className="text-accent hover:underline hover:text-accent-hover transition-colors"
+                  >
+                    {acc}
+                  </Link>
+                </span>
+              )) : '—'}
             </span>
           </div>
+
           {e.risk_score != null && (
             <div className="text-xs text-ink-secondary mt-2 flex items-center gap-1.5">
               <span>Risk score:</span>

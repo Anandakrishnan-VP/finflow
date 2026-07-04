@@ -4,7 +4,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from security.auth import verify_token
 from routers import auth, cases, statements, analysis, graph
-from routers import entities, reports, watchlist, query, admin, verdicts, next_actions, chat, syndicates, annotations, hypothesis, intelligence
+from routers import entities, reports, watchlist, query, admin, verdicts, next_actions, chat, syndicates, annotations, hypothesis, intelligence, suspects
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,6 +58,8 @@ app.include_router(syndicates.router)
 app.include_router(annotations.router)
 app.include_router(hypothesis.router)
 app.include_router(intelligence.router)
+app.include_router(suspects.router)
+
 
 @app.websocket("/ws/analysis/{task_id}")
 async def analysis_ws(
