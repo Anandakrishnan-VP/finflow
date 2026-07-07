@@ -19,12 +19,12 @@ import HypothesisEngine from '../components/HypothesisEngine';
 
 const TABS = [
   'Executive Summary', 'Overview', 'Upload', 'Transactions', 
-  'Alerts', 'Suspects', 'Graph', 'Money Trail', 'Entities', 
+  'Suspects', 'Graph', 'Money Trail', 'Entities', 
   'Ask AI', 'Reports', 'Hypothesis'
 ];
 
 const ANALYSIS_REQUIRED_TABS = [
-  'Executive Summary', 'Alerts', 'Suspects', 'Graph', 
+  'Executive Summary', 'Suspects', 'Graph', 
   'Money Trail', 'Ask AI', 'Reports', 'Hypothesis'
 ];
 
@@ -36,6 +36,7 @@ export default function CaseDetailPage() {
   const [statements, setStatements] = useState([]);
   const [taskId, setTaskId]       = useState(null);
   const [hasSetDefaultTab, setHasSetDefaultTab] = useState(false);
+  const [showAlertsModal, setShowAlertsModal] = useState(false);
 
   const loadCase       = () => apiClient.get(`/cases/${caseId}`).then(r => setCaseInfo(r.data));
   const loadSummary    = () => apiClient.get(`/cases/${caseId}/summary`).then(r => setSummary(r.data));
@@ -113,6 +114,25 @@ export default function CaseDetailPage() {
     }
   };
 
+  const closeCase = async () => {
+    if (!window.confirm("Are you sure you want to mark this forensic case as CLOSED? You can re-open it at any time.")) return;
+    try {
+      await apiClient.patch(`/cases/${caseId}`, { status: 'CLOSED' });
+      loadCase();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to close case.");
+    }
+  };
+
+  const reopenCase = async () => {
+    try {
+      await apiClient.patch(`/cases/${caseId}`, { status: 'ANALYZED' });
+      loadCase();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to re-open case.");
+    }
+  };
+
   const handleUploaded = () => {
     loadSummary();
     loadStatements();
@@ -181,6 +201,23 @@ export default function CaseDetailPage() {
                 >
                   ✏️ Edit
                 </button>
+                {caseInfo.status === 'CLOSED' ? (
+                  <button 
+                    onClick={reopenCase}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-md px-2.5 py-1 transition-colors"
+                    title="Re-open Case"
+                  >
+                    🔓 Re-open Case
+                  </button>
+                ) : (
+                  <button 
+                    onClick={closeCase}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-ink-secondary bg-surface-sunken hover:bg-surface-sunken/80 border border-border rounded-md px-2.5 py-1 transition-colors"
+                    title="Close Case"
+                  >
+                    🔒 Close Case
+                  </button>
+                )}
               </div>
               <p className="text-xs text-ink-secondary mt-2 leading-relaxed whitespace-pre-wrap">
                 {caseInfo.description || <span className="italic text-ink-muted">No description provided. Click Edit to add details.</span>}
@@ -196,13 +233,15 @@ export default function CaseDetailPage() {
       <div className="text-xs text-ink-muted mb-4 flex items-center gap-2">
         <span>Status:</span>
         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-          caseInfo.status === 'ANALYZED' 
+          caseInfo.status === 'CLOSED'
+            ? 'bg-[#1B4D3E] text-white border border-[#1B4D3E]/30'
+            : caseInfo.status === 'ANALYZED' 
             ? 'bg-accent-subtle text-accent border border-accent/20'
             : caseInfo.status === 'ANALYZING'
             ? 'bg-risk-medium-bg text-risk-medium border border-risk-medium/15 animate-pulse'
             : 'bg-surface-sunken text-ink-secondary border border-border-hairline'
         }`}>
-          {caseInfo.status}
+          {caseInfo.status === 'CLOSED' ? '✓ CLOSED' : caseInfo.status}
         </span>
       </div>
 
@@ -307,10 +346,18 @@ export default function CaseDetailPage() {
                     ₹{summary?.total_amount ? Number(summary.total_amount).toLocaleString('en-IN') : '—'}
                   </div>
                 </div>
-                <div className="bg-surface-raised border border-border-hairline rounded-xl p-4 shadow-card">
-                  <div className="text-xs text-ink-muted font-medium">Alert Types</div>
+                <div 
+                  onClick={() => setShowAlertsModal(true)}
+                  className="bg-surface-raised border border-border-hairline rounded-xl p-4 shadow-card cursor-pointer hover:border-accent/40 hover:shadow-md transition-all"
+                >
+                  <div className="text-xs text-ink-muted font-medium flex items-center justify-between">
+                    <span>Forensic Alerts</span>
+                    <span className="text-[10px] text-accent font-semibold tracking-wider">Inspect ➡️</span>
+                  </div>
                   <div className="text-2xl font-bold text-ink-primary mt-1 font-data">
-                    {summary?.alerts_by_flag ? Object.keys(summary.alerts_by_flag).length : '—'}
+                    {summary?.alerts_by_flag 
+                      ? Object.values(summary.alerts_by_flag).reduce((sum, val) => sum + Number(val), 0)
+                      : '—'}
                   </div>
                 </div>
               </div>
@@ -353,7 +400,6 @@ export default function CaseDetailPage() {
           {activeTab === 'Executive Summary' && <ExecutiveSummaryPanel caseId={caseId} />}
           {activeTab === 'Upload'       && <UploadPanel caseId={caseId} onUploaded={handleUploaded} />}
           {activeTab === 'Transactions' && <TransactionsTable caseId={caseId} />}
-          {activeTab === 'Alerts'       && <AlertsTable caseId={caseId} />}
           {activeTab === 'Suspects'     && <VerdictsPanel caseId={caseId} />}
           {activeTab === 'Graph'        && <GraphView caseId={caseId} />}
           {activeTab === 'Money Trail'  && <MoneyTrailTable caseId={caseId} />}
@@ -362,6 +408,40 @@ export default function CaseDetailPage() {
           {activeTab === 'Reports'      && <ReportsPanel caseId={caseId} />}
           {activeTab === 'Hypothesis'   && <HypothesisEngine caseId={caseId} />}
         </>
+      )}
+
+      {/* Forensic Alerts Pop-Up Modal */}
+      {showAlertsModal && (
+        <div className="fixed inset-0 bg-ink-primary/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-surface-raised rounded-xl shadow-2xl max-w-4xl w-full overflow-hidden flex flex-col border border-border-hairline">
+            {/* Header */}
+            <div className="px-5 py-4 bg-surface-sunken border-b border-border-hairline flex justify-between items-center">
+              <h3 className="font-semibold text-ink-primary text-sm flex items-center gap-1.5">
+                <span>🚨 Forensic Risk Alerts Log</span>
+              </h3>
+              <button onClick={() => setShowAlertsModal(false)} className="text-ink-muted hover:text-ink-primary">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 overflow-y-auto max-h-[70vh]">
+              <AlertsTable caseId={caseId} />
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 bg-surface-sunken border-t border-border-hairline flex justify-end">
+              <button
+                onClick={() => setShowAlertsModal(false)}
+                className="bg-accent hover:bg-accent-hover text-accent-fg px-4 py-1.5 rounded-md text-xs font-semibold transition-colors"
+              >
+                Close Alerts
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

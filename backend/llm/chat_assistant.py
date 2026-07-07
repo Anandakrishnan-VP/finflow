@@ -4,7 +4,10 @@ import logging
 import httpx
 from sqlalchemy import text
 from llm.tokenizer import tokenize, detokenize
-from llm.client import LLM_PROVIDER, LLM_MODEL, GROQ_API_KEY
+from llm.client import (
+    LLM_PROVIDER, LLM_MODEL_GROQ, LLM_MODEL_OLLAMA, GROQ_API_KEY,
+    OLLAMA_URL, _call_ollama
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +127,21 @@ async def chat_with_case_assistant(
             )
         return get_template_chat_response(query)
 
+    # ── Ollama (local) path ────────────────────────────────────────────────────
+    if LLM_PROVIDER == "ollama":
+        try:
+            messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+            for h in history[-10:]:
+                messages.append({"role": h["role"], "content": h["content"]})
+            messages.append({
+                "role": "user",
+                "content": f"Case Context:\n{json.dumps(context_data, default=str)}\n\nOfficer's Question: {query}"
+            })
+            return await _call_ollama("", messages=messages)
+        except Exception as e:
+            logger.error("Ollama chat failed: %s — falling back to template", e)
+            return get_template_chat_response(query)
+
 
     # 5. Tokenize the context and user query to preserve privacy (Rule 6)
     payload_to_tokenize = {
@@ -154,7 +172,7 @@ async def chat_with_case_assistant(
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": LLM_MODEL,
+                    "model": LLM_MODEL_GROQ,
                     "messages": messages,
                     "max_tokens": 800,
                     "temperature": 0.2

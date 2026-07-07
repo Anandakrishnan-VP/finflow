@@ -36,10 +36,19 @@ def _extract_account_info(text: str) -> tuple[str, str]:
     m = re.search(r"ACCOUNT\s*NO\s*[:\-]?\s*(\d{9,20})", text, re.IGNORECASE)
     if m:
         account_id = m.group(1).strip()
+    
+    # Exclude common statement/bank headers
+    exclude_keywords = {"statement of", "idfc first", "bank", "page", "date", "summary", "limit", "branch", "customer"}
+    
     # IDFC: customer name at top before address, all caps
-    m = re.search(r"^([A-Z][A-Z ]{5,40})\n", text, re.MULTILINE)
-    if m:
-        account_holder = m.group(1).strip()
+    matches = re.finditer(r"^([A-Z][A-Z ]{5,40})$", text, re.MULTILINE)
+    for match in matches:
+        candidate = match.group(1).strip()
+        if any(kw in candidate.lower() for kw in exclude_keywords):
+            continue
+        account_holder = candidate
+        break
+        
     return account_id, account_holder
 
 
