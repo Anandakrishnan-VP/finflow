@@ -5,9 +5,14 @@ from .sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "template")
-LLM_MODEL    = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+LLM_PROVIDER     = os.getenv("LLM_PROVIDER", "template")          # ollama | groq | template
+GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
+LLM_MODEL_GROQ   = os.getenv("LLM_MODEL_GROQ", "llama-3.1-8b-instant")
+OLLAMA_URL       = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/chat")
+LLM_MODEL_OLLAMA = os.getenv("LLM_MODEL_OLLAMA", "qwen3:4b")
+
+# Keep backward-compat alias used by legacy code
+LLM_MODEL = LLM_MODEL_GROQ
 
 TEMPLATE_FILE = Path(__file__).parent / "template_responses.json"
 
@@ -22,6 +27,7 @@ async def generate(analysis: dict, prompt_template: str,
                    case_classification: int = 1, response_key: str = "narrative") -> str:
     """
     Main LLM dispatch. Routes to:
+      LLM_PROVIDER=ollama   → local Ollama instance on host
       LLM_PROVIDER=groq     → Groq cloud API (tokenized, RULE 6)
       LLM_PROVIDER=template → template_responses.json (offline fallback)
     """
@@ -29,6 +35,8 @@ async def generate(analysis: dict, prompt_template: str,
         return await _call_template(response_key, analysis)
     elif LLM_PROVIDER == "groq":
         return await _call_groq_tokenized(analysis, prompt_template)
+    elif LLM_PROVIDER == "ollama":
+        return await _call_ollama(prompt_template.replace("{DATA}", str(analysis)))
     else:
         logger.warning("Unknown LLM_PROVIDER=%s, using template fallback", LLM_PROVIDER)
         return await _call_template(response_key, analysis)
@@ -41,19 +49,16 @@ async def _call_template(response_key: str, analysis: dict = None) -> str:
     elif response_key == "graph_explanation":
         return templates.get("graph_explanation", "Graph explanation analysis unavailable in template mode.")
     elif response_key == "nl_query":
-        import json
         q = (analysis or {}).get("_q", "").lower()
         if "circular" in q or "loop" in q:
             return json.dumps(templates.get("nl_queries", {}).get("circular", {}))
         else:
             return json.dumps(templates.get("nl_queries", {}).get("default", {}))
     elif response_key == "case_theory":
-        import json
         return json.dumps(templates.get("case_theory", {"typology": "unknown",
                                                          "confidence": "LOW",
                                                          "evidence": []}))
     elif response_key == "second_opinion":
-        import json
         opinions = templates.get("second_opinion", {})
         acc_id = (analysis or {}).get("account_id", "")
         if acc_id == "2245678":
@@ -72,6 +77,34 @@ async def _call_template(response_key: str, analysis: dict = None) -> str:
         return templates.get(response_key, "Response unavailable in template mode.")
 
 
+async def _call_ollama(prompt: str, system: str = None, messages: list = None) -> str:
+    """Call local Ollama server. Returns response text or raises."""
+    if messages is None:
+        msgs = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        msgs.append({"role": "user", "content": prompt})
+    else:
+        msgs = messages
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model": LLM_MODEL_OLLAMA,
+                    "messages": msgs,
+                    "stream": False,
+                    "options": {"temperature": 0.2}
+                }
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data["message"]["content"]
+    except Exception as e:
+        logger.warning("Ollama call failed: %s — falling back to template", e)
+        raise
+
+
 async def _call_groq_tokenized(analysis: dict, prompt_template: str) -> str:
     """RULE 6: Tokenize → call Groq → detokenize locally."""
     try:
@@ -83,7 +116,7 @@ async def _call_groq_tokenized(analysis: dict, prompt_template: str) -> str:
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}",
                          "Content-Type": "application/json"},
                 json={
-                    "model": LLM_MODEL,
+                    "model": LLM_MODEL_GROQ,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 1000
                 }

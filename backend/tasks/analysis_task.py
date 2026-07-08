@@ -608,6 +608,7 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
     import json
     import hashlib
     from datetime import datetime
+    from decimal import Decimal
     from sqlalchemy import text
     from parsers.router import route_file
     import logging
@@ -659,6 +660,28 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
             # Retrieve the statement file hash for chaining
             file_hash = meta.get("file_hash", "GENESIS")
 
+            def clean_amount(val) -> str:
+                try:
+                    d = Decimal(str(val))
+                    if not d.is_finite() or abs(d) >= Decimal('10000000000000000'):
+                        logger.warning("Invalid amount clamped to 0.0000: %s", val)
+                        return "0.0000"
+                    return str(d)
+                except Exception:
+                    return "0.0000"
+
+            def clean_balance(val) -> Optional[str]:
+                if val is None:
+                    return None
+                try:
+                    d = Decimal(str(val))
+                    if not d.is_finite() or abs(d) >= Decimal('10000000000000000'):
+                        logger.warning("Invalid balance set to None: %s", val)
+                        return None
+                    return str(d)
+                except Exception:
+                    return None
+
             # Sort transactions to generate a deterministic hash chain
             txns = sorted(txns, key=lambda t: (t.txn_date or datetime.min, t.txn_hash))
 
@@ -678,9 +701,9 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
                     "ah": txn.account_holder,
                     "bn": txn.bank_name,
                     "td": txn.txn_date,
-                    "amt": str(txn.amount),
+                    "amt": clean_amount(txn.amount),
                     "tt": txn.txn_type,
-                    "bal": str(txn.balance_after) if txn.balance_after else None,
+                    "bal": clean_balance(txn.balance_after),
                     "nar": txn.narration,
                     "cp": txn.counterparty_account,
                     "cpn": txn.counterparty_name,
@@ -702,12 +725,18 @@ async def _run_parse_statement_pipeline_core(task_self, statement_id: str, file_
                         chunk
                     )
                 except Exception as ex:
-                    logger.debug("Transaction batch insert skip in task: %s", ex)
+                    logger.error("Transaction batch insert failed: %s", ex, exc_info=True)
+                    await db.rollback()
+                    raise ex
 
             await db.commit()
 
         except Exception as e:
             logger.error("Parser celery task failed for statement %s: %s", statement_id, e, exc_info=True)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             await db.execute(
                 text("""UPDATE statements 
                         SET parse_status = 'FAILED', parse_progress = 100, 

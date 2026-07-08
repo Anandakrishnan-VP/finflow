@@ -361,9 +361,10 @@ async def get_suspect_graph(
             if round_trip_only:
                 # Closed cycles involving any of the suspect's accounts
                 cypher = """
-                    MATCH path = (a:Account {case_id: $cid})-[:SENT*2..6]->(a)
-                    WHERE any(acc_id IN [n IN nodes(path) | n.account_id] WHERE acc_id IN $targets)
-                    WITH path, [n IN nodes(path) | n.account_id] AS node_ids
+                    MATCH (a:Account {case_id: $cid})
+                    WHERE a.account_id IN $targets
+                    MATCH path = (a)-[:SENT*2..4]->(a)
+                    WITH path
                     UNWIND relationships(path) AS r
                     WITH startNode(r) AS src, endNode(r) AS dst, r
                     RETURN DISTINCT src.account_id AS source, dst.account_id AS target,

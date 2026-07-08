@@ -150,6 +150,17 @@ async def health_full():
     llm_provider = os.getenv("LLM_PROVIDER", "groq")
     if llm_provider == "template":
         result["llm"] = "template_mode (offline)"
+    elif llm_provider == "ollama":
+        ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/chat")
+        ollama_model = os.getenv("LLM_MODEL_OLLAMA", "qwen3:4b")
+        # Probe Ollama tags endpoint (port 11434)
+        tags_url = ollama_url.replace("/api/chat", "").rstrip("/") + "/api/tags"
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                r = await client.get(tags_url)
+            result["llm"] = f"ollama_reachable:{ollama_model}"
+        except Exception:
+            result["llm"] = f"ollama_unreachable:{ollama_model}"
     elif llm_provider == "groq":
         try:
             async with httpx.AsyncClient(timeout=5) as client:

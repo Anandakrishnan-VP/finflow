@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { apiClient } from '../api/client';
 
 export default function DashboardPage() {
@@ -69,7 +70,8 @@ export default function DashboardPage() {
               key={c.id}
               onClick={() => navigate(`/cases/${c.id}`)}
               style={{ animationDelay: `${idx * 50}ms` }}
-              className="group text-left bg-surface-raised border border-border-hairline rounded-2xl p-6 cursor-pointer flex flex-col justify-between h-52 premium-card relative shadow-sm hover:shadow-md animate-slide-up"
+              className={`group text-left bg-surface-raised border border-border-hairline rounded-2xl p-6 cursor-pointer flex flex-col justify-between h-52 premium-card relative shadow-sm hover:shadow-md animate-slide-up transition-all duration-200
+                ${c.status === 'CLOSED' ? 'opacity-70 hover:opacity-100 border-[#23352A]/40' : ''}`}
             >
               <div>
                 <div className="flex items-center justify-between gap-2">
@@ -77,13 +79,15 @@ export default function DashboardPage() {
                     {c.case_number}
                   </span>
                   <span className={`text-[9px] font-extrabold tracking-wider px-2.5 py-0.5 rounded-full uppercase ${
-                    isAnalyzed
+                    c.status === 'CLOSED'
+                      ? 'bg-[#1B4D3E] text-white border border-[#1B4D3E]/30'
+                      : isAnalyzed
                       ? 'bg-accent-subtle text-accent border border-accent/20'
                       : c.status === 'ANALYZING'
                       ? 'bg-risk-medium-bg text-risk-medium border border-risk-medium/15 animate-pulse'
                       : 'bg-surface-sunken text-ink-secondary border border-border-hairline'
                   }`}>
-                    {c.status}
+                    {c.status === 'CLOSED' ? '✓ Closed' : c.status}
                   </span>
                 </div>
                 <h3 className="text-sm font-extrabold text-ink-primary mt-3 group-hover:text-accent transition-colors duration-200 line-clamp-1">
@@ -128,7 +132,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Modal - Create Case */}
-      {showCreate && (
+      {showCreate && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
             className="fixed inset-0 bg-surface-shading/35 backdrop-blur-sm transition-all duration-300"
@@ -197,7 +201,8 @@ export default function DashboardPage() {
               </button>
             </div>
           </form>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

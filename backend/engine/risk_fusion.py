@@ -5,7 +5,7 @@ from graph.algorithms import rank_normalize
 
 logger = logging.getLogger(__name__)
 
-REVIEW_THRESHOLD = 50  # composite_score >= this => algo_verdict = FLAGGED
+REVIEW_THRESHOLD = 33  # composite_score >= this => algo_verdict = FLAGGED
 
 # SEVERITY_WEIGHTS literally matches AlertsTable.jsx's severity map:
 # high = 1.0, medium = 0.6, low = 0.3
@@ -85,7 +85,7 @@ def compute_role_label(
     txn_range_days = (max(dates) - min(dates)).days if len(dates) > 1 else 0
     
     # 1. DORMANT_SUSPECT: Has DORMANT_ACTIVATION flag and significant composite score/inflows
-    if any("DORMANT_ACTIVATION" in f for f in all_flags) and (composite_score >= 40 or total_credit > 10000):
+    if any("DORMANT_ACTIVATION" in f for f in all_flags) and (composite_score >= 30 or total_credit > 10000):
         return "DORMANT_SUSPECT"
         
     # 2. CASH_OUT: Cash ratio is high (> 0.5) and significant debit activity
@@ -98,17 +98,17 @@ def compute_role_label(
         any(flag_name in f for flag_name in ["STRUCTURING", "LAYERING", "PASSTHROUGH_SUSPECTED", "FAN_IN_PATTERN", "FAN_OUT_PATTERN"])
         for f in all_flags
     )
-    if (is_passthrough and has_mule_flags and composite_score >= 40) or (is_passthrough and composite_score >= 60):
+    if (is_passthrough and has_mule_flags and composite_score >= 30) or (is_passthrough and composite_score >= 60):
         return "MULE"
         
     # 4. AGGREGATOR: Receives from many sources (high in-degree) and forwards to others, or high betweenness
-    if (in_degree >= 3 and out_degree >= 1 and composite_score >= 40) or (betweenness >= 0.4 and composite_score >= 40):
+    if (in_degree >= 3 and out_degree >= 1 and composite_score >= 30) or (betweenness >= 0.4 and composite_score >= 30):
         return "AGGREGATOR"
 
     # Default to SUSPECT if watchlist hit or high composite score
     if any("WATCHLIST_HIT" in f for f in all_flags):
         return "SUSPECT"
-    if composite_score >= 40:
+    if composite_score >= 30:
         return "SUSPECT"
 
     # Default to CLEAR

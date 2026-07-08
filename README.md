@@ -1,7 +1,7 @@
 # FinFlow — Forensic Bank Statement Analysis System
 **Karnataka CID Economic Offences Wing (EOW) — Internal Tool**
 
-A full-stack forensic analysis platform for detecting financial crimes (money laundering, structuring, pass-through mule networks) from bank statement CSVs. Powered by a 3-model ML ensemble, graph analytics, LLM second opinions, and an AI chat assistant.
+A full-stack forensic analysis platform for detecting financial crimes (money laundering, structuring, pass-through mule networks) from bank statement CSVs. Powered by a 3-model ML ensemble, interactive D3.js & Cytoscape.js graph analytics, LLM second opinions, and an AI chat assistant.
 
 ---
 
@@ -40,6 +40,10 @@ ML Pipeline (per analysis run)
   ├── LightGBM          (pre-trained, 500 estimators)
   ├── Local Outlier Factor (fit per-run, density-based)
   └── Ensemble fusion   (40% IF + 35% LGBM + 25% LOF)
+
+Graph Visualization Engine (Frontend)
+  ├── D3.js             ← Case-level interactive network (Force-Directed, Radial concentric, Sankey flow)
+  └── Cytoscape.js      ← Suspect-level localized neighborhood & cycle visualization
 ```
 
 ---
@@ -125,9 +129,14 @@ If you prefer to configure every component manually, follow these steps:
 
 ### Accessing the Application
 
+> [!IMPORTANT]
+> **Default Credentials for Evaluators & Judges:**
+> * **Username:** `admin`
+> * **Password:** `admin123`
+
 1. Open your browser: **https://localhost:3000**
 2. Click **Advanced → Proceed to localhost** to bypass the self-signed TLS certificate warning.
-3. Login using: Username `admin` and the password defined as `ADMIN_INITIAL_PASSWORD` in `.env` (defaults to `admin123`).
+3. Login using the default credentials above.
 
 ---
 
@@ -144,10 +153,10 @@ If you prefer to configure every component manually, follow these steps:
 4. **Review Results** in tabs:
    - **Executive Summary** — AI-generated narrative
    - **Verdicts** — Per-account risk scores with ML + LLM reasoning
-   - **Graph** — Interactive Cytoscape.js network visualization
+   - **Graph** — Interactive D3.js network visualization (with force-directed, radial, and Sankey flow layouts) and localized Cytoscape.js suspect graphs
    - **Alerts** — Flagged transactions with evidence
-   - **Transactions** — Full transaction table with filters
-   - **Money Trail** — FIFO-traced fund flows
+   - **Transactions** — Multi-criteria search dashboard (filtering by date ranges, amount sliders, payment channels, and flag types)
+   - **Money Trail** — Interactive split-screen visual ledger with credit-to-debit hover highlights
    - **Entities** — Extracted PANs, UPIs, phone numbers, IFSCs
    - **Hypothesis** — AI-driven hypothesis engine
    - **Ask AI** — Natural language query over case data
@@ -163,6 +172,7 @@ If you prefer to configure every component manually, follow these steps:
 | HDFC | ✅ Yes | Optimized Specific Parser |
 | Axis | ✅ Yes | Optimized Specific Parser |
 | Kotak | ✅ Yes | Optimized Specific Parser |
+| IDFC | ✅ Yes | Optimized Specific Parser |
 | ICICI | ✅ Yes | Dynamic Generic Pipeline |
 | PNB | ✅ Yes | Dynamic Generic Pipeline |
 | Canara | ✅ Yes | Dynamic Generic Pipeline |

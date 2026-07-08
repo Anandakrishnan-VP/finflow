@@ -12,6 +12,28 @@ export default function TransactionsTable({ caseId }) {
   const [chainReport, setChainReport] = useState(null);
   const [showChainModal, setShowChainModal] = useState(false);
 
+  // Filter input states
+  const [channelInput, setChannelInput] = useState('');
+  const [directionInput, setDirectionInput] = useState('');
+  const [dateFromInput, setDateFromInput] = useState('');
+  const [dateToInput, setDateToInput] = useState('');
+  const [minAmountInput, setMinAmountInput] = useState('');
+  const [maxAmountInput, setMaxAmountInput] = useState('');
+  const [counterpartyInput, setCounterpartyInput] = useState('');
+  const [flaggedOnlyInput, setFlaggedOnlyInput] = useState(false);
+
+  // Applied filter state
+  const [appliedFilters, setAppliedFilters] = useState({
+    channel: '',
+    direction: '',
+    dateFrom: '',
+    dateTo: '',
+    minAmount: '',
+    maxAmount: '',
+    counterparty: '',
+    flaggedOnly: false
+  });
+
   const checkChainIntegrity = async () => {
     setVerifyingChain(true);
     try {
@@ -32,8 +54,10 @@ export default function TransactionsTable({ caseId }) {
   };
 
   useEffect(() => {
-    fetchTotalCount();
-  }, [caseId]);
+    if (!Object.values(appliedFilters).some(v => v !== '' && v !== false)) {
+      fetchTotalCount();
+    }
+  }, [caseId, appliedFilters]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -48,15 +72,58 @@ export default function TransactionsTable({ caseId }) {
     if (accountFilter) {
       params.account_id = accountFilter;
     }
+    if (appliedFilters.channel) {
+      params.channel = appliedFilters.channel;
+    }
+    if (appliedFilters.direction) {
+      params.direction = appliedFilters.direction;
+    }
+    if (appliedFilters.dateFrom) {
+      params.date_from = appliedFilters.dateFrom;
+    }
+    if (appliedFilters.dateTo) {
+      params.date_to = appliedFilters.dateTo;
+    }
+    if (appliedFilters.minAmount) {
+      params.amount_min = Number(appliedFilters.minAmount);
+    }
+    if (appliedFilters.maxAmount) {
+      params.amount_max = Number(appliedFilters.maxAmount);
+    }
+    if (appliedFilters.counterparty) {
+      params.counterparty = appliedFilters.counterparty;
+    }
+    if (appliedFilters.flaggedOnly) {
+      params.flagged_only = true;
+    }
+
     apiClient.get(`/cases/${caseId}/transactions`, { params })
       .then(r => {
         setTxns(r.data || []);
+        const countHeader = r.headers['x-total-count'];
+        if (countHeader !== undefined) {
+          setTotalCount(Number(countHeader));
+        }
       })
       .catch(e => console.error('Failed to fetch transactions:', e))
       .finally(() => setLoading(false));
-  }, [caseId, accountFilter, currentPage, pageSize]);
+  }, [caseId, accountFilter, currentPage, pageSize, appliedFilters]);
 
-  const totalPages = accountFilter ? null : Math.ceil(totalCount / pageSize) || 1;
+  const handleApplyFilters = () => {
+    setAppliedFilters({
+      channel: channelInput,
+      direction: directionInput,
+      dateFrom: dateFromInput,
+      dateTo: dateToInput,
+      minAmount: minAmountInput,
+      maxAmount: maxAmountInput,
+      counterparty: counterpartyInput,
+      flaggedOnly: flaggedOnlyInput
+    });
+    setCurrentPage(1);
+  };
+
+  const totalPages = Math.ceil(totalCount / pageSize) || 1;
   const startIdx = (currentPage - 1) * pageSize + 1;
   const endIdx = startIdx + txns.length - 1;
 
@@ -107,6 +174,152 @@ export default function TransactionsTable({ caseId }) {
               <option value={200}>200</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      {/* Filter Panel (UPI, NEFT, IMPS, Date, Amount, Counterparty) */}
+      <div className="p-4 border-b border-border-hairline bg-surface-sunken/15 flex flex-wrap gap-4 items-end text-xs">
+        {/* Channel Dropdown */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-[120px]">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Channel</label>
+          <select
+            value={channelInput}
+            onChange={(e) => setChannelInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2.5 py-1.5 outline-none focus:border-accent text-ink-primary shadow-sm"
+          >
+            <option value="">All Channels</option>
+            <option value="UPI">UPI</option>
+            <option value="NEFT">NEFT</option>
+            <option value="RTGS">RTGS</option>
+            <option value="IMPS">IMPS</option>
+            <option value="CASH">CASH</option>
+            <option value="ATM">ATM</option>
+            <option value="CARD">CARD</option>
+          </select>
+        </div>
+
+        {/* Direction Dropdown */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-[120px]">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Direction</label>
+          <select
+            value={directionInput}
+            onChange={(e) => setDirectionInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2.5 py-1.5 outline-none focus:border-accent text-ink-primary shadow-sm"
+          >
+            <option value="">All Directions</option>
+            <option value="inbound">Deposits (Inbound)</option>
+            <option value="outbound">Withdrawals (Outbound)</option>
+          </select>
+        </div>
+
+        {/* Date From */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-[120px]">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Date From</label>
+          <input
+            type="date"
+            value={dateFromInput}
+            onChange={(e) => setDateFromInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2 py-1 outline-none focus:border-accent text-ink-primary shadow-sm"
+          />
+        </div>
+
+        {/* Date To */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-[120px]">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Date To</label>
+          <input
+            type="date"
+            value={dateToInput}
+            onChange={(e) => setDateToInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2 py-1 outline-none focus:border-accent text-ink-primary shadow-sm"
+          />
+        </div>
+
+        {/* Min Amount */}
+        <div className="flex flex-col gap-1.5 w-24">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Min Amount</label>
+          <input
+            type="number"
+            placeholder="Min"
+            value={minAmountInput}
+            onChange={(e) => setMinAmountInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2.5 py-1 outline-none focus:border-accent text-ink-primary shadow-sm"
+          />
+        </div>
+
+        {/* Max Amount */}
+        <div className="flex flex-col gap-1.5 w-24">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Max Amount</label>
+          <input
+            type="number"
+            placeholder="Max"
+            value={maxAmountInput}
+            onChange={(e) => setMaxAmountInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2.5 py-1 outline-none focus:border-accent text-ink-primary shadow-sm"
+          />
+        </div>
+
+        {/* Counterparty Name/ID */}
+        <div className="flex flex-col gap-1.5 flex-1 min-w-[150px]">
+          <label className="font-semibold text-ink-secondary text-[10px] uppercase tracking-wider">Counterparty</label>
+          <input
+            type="text"
+            placeholder="Search name/ID"
+            value={counterpartyInput}
+            onChange={(e) => setCounterpartyInput(e.target.value)}
+            className="w-full bg-surface-raised border border-border rounded-md px-2.5 py-1.5 outline-none focus:border-accent text-ink-primary shadow-sm"
+          />
+        </div>
+
+        {/* Flagged Only Checkbox */}
+        <div className="flex items-center gap-2 mb-2 w-28">
+          <input
+            type="checkbox"
+            id="flaggedOnlyCheckbox"
+            checked={flaggedOnlyInput}
+            onChange={(e) => setFlaggedOnlyInput(e.target.checked)}
+            className="rounded border-border text-accent focus:ring-accent w-4 h-4 bg-surface-raised cursor-pointer"
+          />
+          <label htmlFor="flaggedOnlyCheckbox" className="font-semibold text-ink-secondary text-xs cursor-pointer select-none">
+            Flagged Only
+          </label>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-2">
+          {Object.values(appliedFilters).some(v => v !== '' && v !== false) && (
+            <button
+              onClick={() => {
+                setChannelInput('');
+                setDirectionInput('');
+                setDateFromInput('');
+                setDateToInput('');
+                setMinAmountInput('');
+                setMaxAmountInput('');
+                setCounterpartyInput('');
+                setFlaggedOnlyInput(false);
+                setAppliedFilters({
+                  channel: '',
+                  direction: '',
+                  dateFrom: '',
+                  dateTo: '',
+                  minAmount: '',
+                  maxAmount: '',
+                  counterparty: '',
+                  flaggedOnly: false
+                });
+                setCurrentPage(1);
+              }}
+              className="px-3 py-1.5 bg-surface-sunken hover:bg-border-hairline border border-border-hairline rounded-md text-xs font-semibold text-ink-secondary transition-colors"
+            >
+              Reset
+            </button>
+          )}
+          <button
+            onClick={handleApplyFilters}
+            className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-accent-fg rounded-md text-xs font-bold transition-all shadow-sm"
+          >
+            Apply Filters
+          </button>
         </div>
       </div>
 

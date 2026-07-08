@@ -197,7 +197,7 @@ export default function ExecutiveSummaryPanel({ caseId }) {
           </div>
           <div className="border-l border-border-hairline pl-6">
             <div className="text-xs font-semibold text-ink-muted uppercase tracking-wider">Total Scrutinized</div>
-            <div className="text-2xl font-bold text-ink-primary mt-1 font-data">
+            <div className="text-2xl font-bold text-ink-primary mt-1 font-data break-all">
               ₹{summary?.total_amount ? Number(summary.total_amount).toLocaleString('en-IN') : '—'}
             </div>
           </div>
