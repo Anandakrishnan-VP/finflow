@@ -125,19 +125,32 @@ export default function UploadPanel({ caseId, onUploaded }) {
 
   const handleUpload = async () => {
     setUploading(true);
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append('file', file);
-      try {
-        const override = bankOverride[file.name];
-        const params = override ? { bank_override: override } : {};
-        await apiClient.post(`/cases/${caseId}/statements`, formData, {
-          params, headers: { 'Content-Type': 'multipart/form-data' },
-        });
-        await fetchStatements();
-      } catch (err) {
-        const detail = err.response?.data?.detail || 'Upload failed';
-        setStatements((s) => [...s, { filename: file.name, status: 'FAILED', error: detail }]);
+    const formData = new FormData();
+    formData.append('case_id', caseId);
+    files.forEach((file) => formData.append('files', file));
+
+    try {
+      // High-concurrency Java 21 Virtual Threads Gateway upload
+      await apiClient.post('/gateway/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      await fetchStatements();
+    } catch (gatewayErr) {
+      // Fallback to standard endpoint if needed
+      for (const file of files) {
+        const singleForm = new FormData();
+        singleForm.append('file', file);
+        try {
+          const override = bankOverride[file.name];
+          const params = override ? { bank_override: override } : {};
+          await apiClient.post(`/cases/${caseId}/statements`, singleForm, {
+            params, headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          await fetchStatements();
+        } catch (err) {
+          const detail = err.response?.data?.detail || 'Upload failed';
+          setStatements((s) => [...s, { filename: file.name, status: 'FAILED', error: detail }]);
+        }
       }
     }
     setFiles([]);
