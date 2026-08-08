@@ -282,9 +282,10 @@ def _normalize_transactions(
                 "balance_after": str(txn.balance_after) if txn.balance_after is not None else None,
                 "narration": txn.narration,
             }
-        if not txn.account_id or not txn.account_id.strip():
-            txn.account_id = fallback_account_id or f"STATEMENT-{statement_id[:8]}"
-            txn.identity_confidence = 0.75 if fallback_account_id else 0.20
+        if not txn.account_id or not txn.account_id.strip() or txn.account_id.startswith("STATEMENT-"):
+            bank_prefix = txn.bank_name or parser_name.upper() or "Bank"
+            txn.account_id = fallback_account_id or f"{bank_prefix} ...{statement_id[:4]}"
+            txn.identity_confidence = 0.75 if fallback_account_id else 0.40
             identity_fallback_used = True
         elif txn.identity_confidence is None:
             txn.identity_confidence = 0.90

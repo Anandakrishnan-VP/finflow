@@ -7,7 +7,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "http://localhost:8000"
 username = "admin"
-password = "admin_strong_pass123"
+password = "admin123"
 
 def main():
     # 1. Login
@@ -40,7 +40,7 @@ def main():
                 "case_number": "CASE-XYZ",
                 "title": "Forensic Case XYZ",
                 "description": "Test Case for Phase 4 verdicts and Benford's Law check",
-                "classification_level": "CONFIDENTIAL"
+                "classification_level": 1
             },
             verify=False
         )

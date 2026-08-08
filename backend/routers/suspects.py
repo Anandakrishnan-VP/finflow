@@ -69,14 +69,14 @@ async def resolve_linked_accounts_internal(db: AsyncSession, case_id: str, accou
         # Return at least itself
         return [{
             "account_id": account_id,
-            "bank_name": "Unknown Bank",
-            "account_holder": "Unknown Suspect",
+            "bank_name": "Bank",
+            "account_holder": f"Account ...{account_id[-4:]}" if len(account_id) >= 4 else f"Account {account_id}",
             "match_confidence": "Confirmed",
             "match_reason": "Primary Account"
         }]
 
-    target_holder = target_row.account_holder or "Unnamed Suspect"
-    target_bank = target_row.bank_name or "Unknown Bank"
+    target_holder = target_row.account_holder if target_row.account_holder and target_row.account_holder.lower() not in ("unnamed suspect", "unknown suspect", "unnamed entity", "") else (f"Account ...{account_id[-4:]}" if len(account_id) >= 4 else f"Account {account_id}")
+    target_bank = target_row.bank_name or "Bank"
 
     # 2. Extract targets' features from narrations
     target_txns_q = await db.execute(
@@ -119,8 +119,8 @@ async def resolve_linked_accounts_internal(db: AsyncSession, case_id: str, accou
         if cand_id == account_id:
             continue
         
-        cand_holder = cand["account_holder"] or "Unnamed Suspect"
-        cand_bank = cand["bank_name"] or "Unknown Bank"
+        cand_holder = cand["account_holder"] if cand["account_holder"] and cand["account_holder"].lower() not in ("unnamed suspect", "unknown suspect", "unnamed entity", "") else (f"Account ...{cand_id[-4:]}" if len(cand_id) >= 4 else f"Account {cand_id}")
+        cand_bank = cand["bank_name"] or "Bank"
 
         # Query candidate's transaction narrations for overlap check
         cand_txns_q = await db.execute(

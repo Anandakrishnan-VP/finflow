@@ -353,7 +353,11 @@ export default function TransactionsTable({ caseId }) {
                     day: '2-digit', month: 'short', year: 'numeric'
                   })}
                 </td>
-                <td className="px-5 py-3 text-ink-primary font-mono font-medium">{t.account_id}</td>
+                <td className="px-5 py-3 text-ink-primary font-mono font-medium">
+                  {t.account_id && t.account_id.toLowerCase().startsWith('statement-')
+                    ? `${t.bank_name || 'Account'} ...${t.account_id.replace(/statement-/i, '').slice(0, 4)}`
+                    : t.account_id}
+                </td>
                 <td className="px-5 py-3 whitespace-nowrap">
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block border ${
                     t.txn_type === 'CR' 

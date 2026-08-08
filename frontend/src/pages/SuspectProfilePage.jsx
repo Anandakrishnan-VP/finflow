@@ -25,7 +25,7 @@ const renderMessageContent = (text, caseId) => {
           to={`/cases/${caseId}/suspects/${part}`}
           className="text-accent hover:underline font-mono bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded text-[10px] font-bold mx-0.5 inline-block align-middle"
         >
-          {part}
+          {part.startsWith('STATEMENT-') ? `Account ...${part.replace('STATEMENT-', '').slice(0, 4)}` : part}
         </Link>
       );
     }

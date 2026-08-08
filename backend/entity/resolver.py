@@ -5,6 +5,14 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
+def format_human_statement_title(bank_name: str = None, account_number: str = None, holder_name: str = None) -> str:
+    """Formats raw statement fields into a clean humanized title (e.g., 'HDFC Bank • Account ...8921 (Arjun Krishna)')."""
+    bank = bank_name or "Bank"
+    acc_suffix = f"...{account_number[-4:]}" if account_number and len(account_number) >= 4 else "Account"
+    clean_holder = holder_name.strip().title() if holder_name and holder_name.lower() not in ("unnamed entity", "unnamed suspect", "unknown", "") else ""
+    holder_str = f" ({clean_holder})" if clean_holder else ""
+    return f"{bank} • Account {acc_suffix}{holder_str}"
+
 async def resolve_entities(db: AsyncSession, case_id: str, transactions: list) -> dict:
     """
     Build an entity registry: group account IDs that appear to be the same entity
@@ -15,10 +23,10 @@ async def resolve_entities(db: AsyncSession, case_id: str, transactions: list) -
     all_accounts = list({t.account_id for t in transactions if t.account_id})
     for account_id in all_accounts:
         # Find the canonical name (account_holder) from transactions
-        canonical_name = "Unnamed Entity"
+        canonical_name = f"Account ...{account_id[-4:]}" if len(account_id) >= 4 else f"Account {account_id}"
         for t in transactions:
-            if t.account_id == account_id and t.account_holder:
-                canonical_name = t.account_holder
+            if t.account_id == account_id and t.account_holder and t.account_holder.lower() not in ("unnamed entity", "unnamed suspect", "unknown", ""):
+                canonical_name = t.account_holder.title()
                 break
 
         # Check if entity already exists for this case
@@ -34,7 +42,7 @@ async def resolve_entities(db: AsyncSession, case_id: str, transactions: list) -
             await db.execute(
                 text("""UPDATE entities 
                         SET canonical_name = :name 
-                        WHERE id = :eid AND (canonical_name IS NULL OR canonical_name = 'Unnamed Entity' OR canonical_name = '')"""),
+                        WHERE id = :eid AND (canonical_name IS NULL OR canonical_name LIKE 'Unnamed%' OR canonical_name = '')"""),
                 {"name": canonical_name, "eid": entity_id}
             )
         else:
@@ -51,3 +59,4 @@ async def resolve_entities(db: AsyncSession, case_id: str, transactions: list) -
                 {"eid": str(new_id), "cid": case_id, "aid": account_id}
             )
     return entity_map
+
