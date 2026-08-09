@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['react-force-graph-2d', 'react-force-graph-3d', 'three', 'd3-selection', 'd3-transition', 'd3-zoom', 'd3-force']
+  },
   server: {
     port: 3000,
     proxy: {
