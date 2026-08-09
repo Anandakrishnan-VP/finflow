@@ -109,6 +109,25 @@ services:
       - SETUID
       - SETGID
 
+  ingestion-gateway:
+    container_name: finflow-ingestion-gateway
+    image: finflow-ingestion-gateway:latest
+    build:
+      context: ./ingestion-gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    networks:
+      - internal
+      - external
+
   worker:
     build:
       context: .

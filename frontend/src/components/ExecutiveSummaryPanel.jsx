@@ -15,7 +15,7 @@ const renderMessageContent = (text, caseId) => {
           to={`/cases/${caseId}/suspects/${part}`}
           className="text-accent hover:underline font-mono bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded text-[10px] font-bold mx-0.5 inline-block align-middle"
         >
-          {part}
+          {part.startsWith('STATEMENT-') ? `Account ...${part.replace('STATEMENT-', '').slice(0, 4)}` : part}
         </Link>
       );
     }
@@ -276,7 +276,9 @@ export default function ExecutiveSummaryPanel({ caseId }) {
                           <div className="flex items-center gap-2.5 flex-wrap">
                             <span className={`w-2 h-2 rounded-full shrink-0 ${v.composite_score >= 75 ? 'animate-pulse bg-risk-high' : v.composite_score >= 40 ? 'bg-risk-medium' : 'bg-accent'}`} />
                             <span className="text-xs font-bold text-ink-primary">
-                              {v.account_holder || 'Unnamed Suspect'}
+                              {(!v.account_holder || v.account_holder.toLowerCase().includes('unnamed') || v.account_holder.toLowerCase().includes('unknown')) 
+                                ? `Account ...${(v.account_id || '').replace(/statement-/i, '').slice(0, 4)}` 
+                                : v.account_holder}
                             </span>
                             <span className="text-xs text-ink-muted">|</span>
                             <Link
@@ -284,7 +286,9 @@ export default function ExecutiveSummaryPanel({ caseId }) {
                               onClick={(e) => e.stopPropagation()} // Prevent expand toggle when clicking link
                               className="font-mono text-[11px] font-semibold text-accent hover:text-accent-hover hover:underline transition-colors bg-accent/5 px-2 py-0.5 rounded border border-accent/15"
                             >
-                              {v.account_id}
+                              {v.account_id && v.account_id.toLowerCase().startsWith('statement-')
+                                ? `Account ...${v.account_id.replace(/statement-/i, '').slice(0, 4)}`
+                                : v.account_id}
                             </Link>
                             <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded border ${scoreColor}`}>
                               {v.tier_label || 'Suspect'}
@@ -474,10 +478,12 @@ export default function ExecutiveSummaryPanel({ caseId }) {
                           ? 'bg-surface-sunken text-ink-muted border-border-hairline' 
                           : 'bg-accent-subtle text-accent border-accent/20'
                       }`}>
-                        {action.account_id}
+                        {action.account_id && action.account_id.toLowerCase().startsWith('statement-')
+                          ? `Account ...${action.account_id.replace(/statement-/i, '').slice(0, 4)}`
+                          : action.account_id}
                       </span>
                       <p className={`text-xs text-ink-secondary mt-0.5 inline-block ${action.completed ? 'line-through text-ink-muted' : ''}`}>
-                        {action.action_text}
+                        {action.action_text ? action.action_text.replace(/STATEMENT-[A-Za-z0-9\-]+/gi, (m) => `Account ...${m.replace(/statement-/i, '').slice(0, 4)}`) : ''}
                       </p>
                     </div>
                   </div>

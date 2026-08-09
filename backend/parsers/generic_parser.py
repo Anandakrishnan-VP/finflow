@@ -48,28 +48,28 @@ DATE_FORMATS = [
 
 HEADER_PATTERNS = {
     "date": [
-        r"date", r"txn\s*date", r"tran\s*date", r"post\s*date", r"value\s*date", r"\bdt\b", r"booking\s*date"
+        r"date", r"txn\s*date", r"tran\s*date", r"trans\s*date", r"post\s*date", r"value\s*date", r"\bdt\b", r"booking\s*date"
     ],
     "narration": [
-        r"narration", r"particulars", r"description", r"remarks", r"details", r"transaction\s*details", 
+        r"narration", r"particulars", r"tran\s*particular", r"description", r"remarks", r"details", r"transaction\s*details", 
         r"payment\s*details", r"\bremarks\b", r"\binfo\b", r"narrative"
     ],
     "debit": [
-        r"\bdebit\b", r"\bwithdrawal\b", r"\bpayment\b", r"\bdr\b", r"\bwithdraw\b", r"\bout\b", r"\bpaid\b",
-        r"amount\s*debit", r"withdrawal\s*amt", r"debited", r"withdrawals"
+        r"\bdebit\b", r"\bdebits\b", r"debit\s*amt\.?", r"debit\s*amount", r"\bwithdrawal\b", r"\bwithdrawals\b", r"\bpayment\b", r"\bdr\b", r"\bwithdraw\b", r"\bout\b", r"\bpaid\b",
+        r"amount\s*debit", r"withdrawal\s*amt", r"debited"
     ],
     "credit": [
-        r"\bcredit\b", r"\bdeposit\b", r"\breceipt\b", r"\bcr\b", r"\bin\b", r"\breceived\b",
-        r"amount\s*credit", r"deposit\s*amt", r"credited", r"deposits"
+        r"\bcredit\b", r"\bcredits\b", r"credit\s*amt\.?", r"credit\s*amount", r"\bdeposit\b", r"\bdeposits\b", r"\breceipt\b", r"\bcr\b", r"\bin\b", r"\breceived\b",
+        r"amount\s*credit", r"deposit\s*amt", r"credited"
     ],
     "amount": [
         r"\bamount\b", r"\bvalue\b", r"txn\s*amount", r"amount\s*\(rs\)", r"amount\s*\(inr\)", r"\bamt\b"
     ],
     "balance": [
-        r"\bbalance\b", r"\bbal\b", r"running\s*balance", r"balance\s*\(rs\)", r"balance\s*\(inr\)", r"outstanding"
+        r"\bbalance\b", r"\bbal\b", r"running\s*balance", r"balance\s*\(rs\)", r"balance\s*\(inr\)", r"balance\s*amt\.?", r"balance\s*amount", r"outstanding"
     ],
     "ref": [
-        r"ref", r"chq", r"cheque", r"instrument", r"trn", r"id", r"reference", r"utr", r"txn\s*ref"
+        r"ref", r"chq", r"cheque", r"instrument", r"trn", r"id", r"reference", r"utr", r"txn\s*ref", r"ref\s*num"
     ]
 }
 
@@ -225,6 +225,93 @@ def parse_date(s: str) -> Optional[datetime]:
             pass
     return None
 
+_LINE_DATE_PREFIX = re.compile(r'(\d{1,2}[\-/\.]\d{1,2}[\-/\.]\d{2,4})')
+_LINE_AMOUNTS_RE = re.compile(r'([\d,]+\.\d{2})')
+
+def parse_single_column_dump(cleaned_rows: list[list[str]], bank_name: str, hash_seed: str) -> list[UniversalTransaction]:
+    """
+    Fallback parser for legacy dot-matrix text dumps (e.g. IDBI REP27 mainframe dumps)
+    where an entire transaction line is concatenated into a single cell in Column 0.
+    Dynamically handles 1-2 pages of account metadata, headers, disclaimers, or zero cover text.
+    """
+    txns = []
+    account_id_override = None
+
+    for idx, r in enumerate(cleaned_rows):
+        if not r or not r[0]:
+            continue
+        line = r[0].strip()
+        if not line:
+            continue
+
+        # Extract Account Number from cover text if present
+        if not account_id_override:
+            acc_match = re.search(r'(?:Account\s*(?:Number|No|A/c)?[\s:]*)([A-Za-z0-9\-]{8,20})', line, re.IGNORECASE)
+            if acc_match:
+                account_id_override = acc_match.group(1).strip()
+
+        # Check if line starts with a date pattern (e.g. 11-03-2025 or 11/03/2025)
+        m_date = _LINE_DATE_PREFIX.search(line)
+        if not m_date:
+            # Multi-line narration continuation if we have a previous transaction
+            if txns and not any(kw in line.lower() for kw in ["page", "report", "opening balance", "brought forward", "----------------"]):
+                txns[-1].narration = (txns[-1].narration + " " + line).strip()
+            continue
+
+        date_str = m_date.group(1)
+        txn_date = parse_date(date_str)
+        if not txn_date:
+            continue
+
+        # Find all monetary amounts in the line
+        amounts = _LINE_AMOUNTS_RE.findall(line)
+        if not amounts:
+            continue
+
+        # Extract narration by taking line between Date and first Amount
+        first_amt_pos = line.find(amounts[0])
+        raw_narration = line[len(date_str):first_amt_pos].strip()
+        # Clean leading tran IDs or ref codes from narration
+        narration = re.sub(r'^[A-Za-z0-9/]{3,25}\s+', '', raw_narration).strip()
+        if not narration:
+            narration = raw_narration or f"Transaction on {date_str}"
+
+        # Determine Amount and Transaction Type
+        amt = parse_decimal(amounts[0])
+        if amt is None:
+            continue
+
+        balance_val = None
+        if len(amounts) >= 2:
+            balance_val = parse_decimal(amounts[-1])
+
+        # Check for CR / DR indicators in line
+        txn_type = TransactionType.DEBIT
+        if "CR" in line.upper() or "CREDIT" in line.upper() or "DEP" in line.upper():
+            txn_type = TransactionType.CREDIT
+
+        seed = f"{hash_seed}|{bank_name}|{idx}|{date_str}|{amt}|{narration}"
+        txn_hash = hashlib.sha256(seed.encode()).hexdigest()
+
+        txns.append(UniversalTransaction(
+            txn_hash=txn_hash,
+            case_id="",
+            statement_id="",
+            source_file_hash=hash_seed,
+            account_id=account_id_override or f"Account ...{hash_seed[:4]}",
+            account_holder="",
+            bank_name=bank_name or "IDBI Bank",
+            txn_date=txn_date,
+            narration=narration,
+            amount=amt,
+            txn_type=txn_type,
+            balance_after=balance_val,
+            raw_row_index=idx
+        ))
+
+    logger.info(f"Single-column line parser extracted {len(txns)} transactions from text dump.")
+    return txns
+
 def parse_generic_table(
     rows: list[list[str]],
     bank_name: str,
@@ -250,6 +337,12 @@ def parse_generic_table(
         cleaned_rows = []
         for r in rows:
             cleaned_rows.append([str(c or "").strip() for c in r])
+
+    # Check if single column text dump (e.g. IDBI REP27 or legacy mainframe text dump)
+    if not column_mapping and cleaned_rows and (all(len(r) <= 1 for r in cleaned_rows[:50])):
+        single_col_txns = parse_single_column_dump(cleaned_rows, bank_name, _hash_seed)
+        if single_col_txns:
+            return (single_col_txns, {}) if return_mapping else single_col_txns
 
     if column_mapping:
         logger.info(f"Generic parser: using manual column mapping: {column_mapping}")
@@ -280,16 +373,19 @@ def parse_generic_table(
         best_score = 0
         header_mapping = {}
 
-        for idx, r in enumerate(cleaned_rows[:50]):
+        for idx, r in enumerate(cleaned_rows[:150]):
             score = 0
             mapping = {}
             for c_idx, cell in enumerate(r):
                 cell_lower = cell.lower().strip()
                 if not cell_lower:
                     continue
+                # Clean leading and trailing non-alphanumeric border characters (dashes, hyphens, underscores, equals, etc.)
+                cell_cleaned = re.sub(r"^[\-_=*\#\|+\\/~\s]+|[\-_=*\#\|+\\/~\s]+$", "", cell_lower)
+                target_str = cell_cleaned if cell_cleaned else cell_lower
                 for key, patterns in HEADER_PATTERNS.items():
                     for pattern in patterns:
-                        if re.search(pattern, cell_lower):
+                        if re.search(pattern, target_str) or re.search(pattern, cell_lower):
                             if key not in mapping:
                                 mapping[key] = c_idx
                                 score += 1
