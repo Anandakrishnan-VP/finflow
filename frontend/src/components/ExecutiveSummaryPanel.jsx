@@ -453,84 +453,10 @@ export default function ExecutiveSummaryPanel({ caseId }) {
 
         </div>
 
-        {/* Right Column - Checklist & AI Case Assistant */}
+        {/* Right Column - AI Case Assistant */}
         <div className="space-y-6">
-          
-          {/* Next Actions Checklist */}
-          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
-            <div className="font-bold text-ink-primary text-base mb-4 border-b border-border-hairline pb-2">Investigation Checklist</div>
-            
-            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-              {nextActions.length === 0 ? (
-                <div className="text-xs text-ink-muted italic py-4">No checklist items generated yet — run statement analysis to receive recommendations.</div>
-              ) : (
-                nextActions.map(action => (
-                  <div key={action.id} className="flex items-start gap-3 p-2 bg-surface-sunken/40 border border-border-hairline/30 rounded-lg hover:bg-surface-sunken/80 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={action.completed}
-                      onChange={() => handleToggleAction(action.id, action.completed)}
-                      className="mt-0.5 h-4 w-4 rounded border-border text-accent focus:ring-accent cursor-pointer bg-surface-raised"
-                    />
-                    <div className="flex-1">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border inline-block mr-2 ${
-                        action.completed 
-                          ? 'bg-surface-sunken text-ink-muted border-border-hairline' 
-                          : 'bg-accent-subtle text-accent border-accent/20'
-                      }`}>
-                        {action.account_id && action.account_id.toLowerCase().startsWith('statement-')
-                          ? `Account ...${action.account_id.replace(/statement-/i, '').slice(0, 4)}`
-                          : action.account_id}
-                      </span>
-                      <p className={`text-xs text-ink-secondary mt-0.5 inline-block ${action.completed ? 'line-through text-ink-muted' : ''}`}>
-                        {action.action_text ? action.action_text.replace(/STATEMENT-[A-Za-z0-9\-]+/gi, (m) => `Account ...${m.replace(/statement-/i, '').slice(0, 4)}`) : ''}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Custom Next Action Input */}
-            <form onSubmit={handleAddCustomAction} className="mt-4 pt-3 border-t border-border-hairline space-y-2">
-              <div className="text-xs font-semibold text-ink-secondary">Create Custom Next Action</div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Linked Account (e.g. 1004561)..."
-                  className="w-1/2 p-1.5 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
-                  value={newActionAccount}
-                  onChange={e => setNewActionAccount(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="Task Key (e.g. SUMMONS)..."
-                  className="w-1/2 p-1.5 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
-                  value={newActionKey}
-                  onChange={e => setNewActionKey(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Describe required investigation task..."
-                  className="flex-1 p-1.5 border border-border rounded-md text-xs bg-surface-raised text-ink-primary focus:border-accent focus:ring-1 focus:ring-accent outline-none"
-                  value={newActionText}
-                  onChange={e => setNewActionText(e.target.value)}
-                  required
-                />
-                <button
-                  type="submit"
-                  className="bg-accent hover:bg-accent-hover text-accent-fg text-xs px-4 rounded-md transition-colors font-semibold"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-          </div>
-
           {/* Interactive AI Case Assistant */}
-          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card flex flex-col h-[520px]">
+          <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card flex flex-col h-[560px]">
             <div className="font-bold text-ink-primary text-base border-b border-border-hairline pb-2 mb-3">AI Case Assistant</div>
             
             {/* Chat message space */}

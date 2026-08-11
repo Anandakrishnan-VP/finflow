@@ -711,6 +711,15 @@ export default function GraphView({ caseId }) {
       clickedNode.fx = clickedNode.x;
       clickedNode.fy = clickedNode.y;
       setSelectedNode(clickedNode);
+
+      // Auto-shift camera target so clicked node sits in the LEFT clear 32% screen area!
+      const { width, height } = dimensions;
+      const targetK = 1.35;
+      transformRef.current = {
+        k: targetK,
+        x: width * 0.32 - clickedNode.x * targetK,
+        y: height / 2 - clickedNode.y * targetK,
+      };
     } else {
       isDraggingRef.current = true;
       dragStartRef.current = { x: mouseX - transformRef.current.x, y: mouseY - transformRef.current.y };
@@ -798,8 +807,6 @@ export default function GraphView({ caseId }) {
 
   return (
     <div className="space-y-4">
-      <PatternInsightsPanel caseId={caseId} onFocusPattern={setFocusedPattern} focusedKey={focusedPattern?.key} />
-
       <div className="bg-white dark:bg-[#0c1017] p-4 rounded-xl border border-gray-200 dark:border-cyan-500/20 shadow-lg space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -1025,9 +1032,9 @@ export default function GraphView({ caseId }) {
                             setSelectedNode(node);
                             const { width, height } = dimensions;
                             transformRef.current = {
-                              k: 1.8,
-                              x: width / 2 - node.x * 1.8,
-                              y: height / 2 - node.y * 1.8,
+                              k: 1.35,
+                              x: width * 0.32 - node.x * 1.35,
+                              y: height / 2 - node.y * 1.35,
                             };
                           }}
                           className="flex items-center justify-between p-2 rounded-lg bg-gray-900/60 hover:bg-gray-800 cursor-pointer border border-gray-800/80 transition-all text-xs"
@@ -1051,9 +1058,9 @@ export default function GraphView({ caseId }) {
                             setSelectedNode(node);
                             const { width, height } = dimensions;
                             transformRef.current = {
-                              k: 1.8,
-                              x: width / 2 - node.x * 1.8,
-                              y: height / 2 - node.y * 1.8,
+                              k: 1.35,
+                              x: width * 0.32 - node.x * 1.35,
+                              y: height / 2 - node.y * 1.35,
                             };
                           }}
                           className="flex items-center justify-between p-2 rounded-lg bg-gray-900/60 hover:bg-gray-800 cursor-pointer border border-gray-800/80 transition-all text-xs"
@@ -1070,6 +1077,11 @@ export default function GraphView({ caseId }) {
           )}
         </div>
       )}
+
+      {/* Pattern Insights Panel placed below the Graph Canvas so canvas is 100% visible at top */}
+      <div className="mt-4">
+        <PatternInsightsPanel caseId={caseId} onFocusPattern={setFocusedPattern} focusedKey={focusedPattern?.key} />
+      </div>
     </div>
   );
 }

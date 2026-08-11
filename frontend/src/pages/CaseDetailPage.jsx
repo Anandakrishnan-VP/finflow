@@ -6,8 +6,6 @@ import ProgressBar from '../components/ProgressBar';
 import GraphView from '../components/GraphView';
 import AlertsTable from '../components/AlertsTable';
 import TransactionsTable from '../components/TransactionsTable';
-import MoneyTrailTable from '../components/MoneyTrailTable';
-import EntitiesPanel from '../components/EntitiesPanel';
 import NLQueryPanel from '../components/NLQueryPanel';
 import ReportsPanel from '../components/ReportsPanel';
 import TimelineChart from '../components/TimelineChart';
@@ -15,22 +13,22 @@ import LlmModeBadge from '../components/LlmModeBadge';
 import VerdictsPanel from '../components/VerdictsPanel';
 import BenfordCard from '../components/BenfordCard';
 import ExecutiveSummaryPanel from '../components/ExecutiveSummaryPanel';
-import HypothesisEngine from '../components/HypothesisEngine';
 
 const TABS = [
-  'Executive Summary', 'Overview', 'Upload', 'Transactions', 
-  'Suspects', 'Graph', 'Money Trail', 'Entities', 
-  'Ask AI', 'Reports', 'Hypothesis'
+  'Upload & Files',
+  'Transaction Ledger',
+  'Cyber-Graph & Suspects',
+  'Executive AI Report'
 ];
 
 const ANALYSIS_REQUIRED_TABS = [
-  'Executive Summary', 'Suspects', 'Graph', 
-  'Money Trail', 'Ask AI', 'Reports', 'Hypothesis'
+  'Cyber-Graph & Suspects',
+  'Executive AI Report'
 ];
 
 export default function CaseDetailPage() {
   const { caseId } = useParams();
-  const [activeTab, setActiveTab] = useState('Upload'); // fallback default
+  const [activeTab, setActiveTab] = useState('Upload & Files');
   const [caseInfo, setCaseInfo]   = useState(null);
   const [summary, setSummary]     = useState(null);
   const [statements, setStatements] = useState([]);
@@ -47,14 +45,12 @@ export default function CaseDetailPage() {
     loadSummary();
     loadStatements();
     
-    // Check if there is an active running task stored locally
     const storedTaskId = localStorage.getItem(`finflow_task_${caseId}`);
     if (storedTaskId) {
       setTaskId(storedTaskId);
     }
   }, [caseId]);
 
-  // Persist taskId to localStorage
   useEffect(() => {
     if (taskId) {
       localStorage.setItem(`finflow_task_${caseId}`, taskId);
@@ -63,15 +59,14 @@ export default function CaseDetailPage() {
     }
   }, [taskId, caseId]);
 
-  // Intelligently select default tab on initial load of case data
   useEffect(() => {
     if (caseInfo && statements && !hasSetDefaultTab) {
       if (caseInfo.status === 'ANALYZED') {
-        setActiveTab('Executive Summary');
+        setActiveTab('Cyber-Graph & Suspects');
       } else if (statements.length > 0) {
-        setActiveTab('Transactions');
+        setActiveTab('Transaction Ledger');
       } else {
-        setActiveTab('Upload');
+        setActiveTab('Upload & Files');
       }
       setHasSetDefaultTab(true);
     }
@@ -223,26 +218,44 @@ export default function CaseDetailPage() {
                 {caseInfo.description || <span className="italic text-ink-muted">No description provided. Click Edit to add details.</span>}
               </p>
             </div>
-            <div className="self-end sm:self-auto">
+            <div className="self-end sm:self-auto flex items-center gap-2">
+              <button
+                onClick={() => setShowAlertsModal(true)}
+                className="bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+              >
+                🚨 Forensic Alerts ({summary?.alerts_by_flag ? Object.values(summary.alerts_by_flag).reduce((a, b) => a + Number(b), 0) : 0})
+              </button>
               <LlmModeBadge />
             </div>
           </div>
         </div>
       )}
 
-      <div className="text-xs text-ink-muted mb-4 flex items-center gap-2">
-        <span>Status:</span>
-        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-          caseInfo.status === 'CLOSED'
-            ? 'bg-[#1B4D3E] text-white border border-[#1B4D3E]/30'
-            : caseInfo.status === 'ANALYZED' 
-            ? 'bg-accent-subtle text-accent border border-accent/20'
-            : caseInfo.status === 'ANALYZING'
-            ? 'bg-risk-medium-bg text-risk-medium border border-risk-medium/15 animate-pulse'
-            : 'bg-surface-sunken text-ink-secondary border border-border-hairline'
-        }`}>
-          {caseInfo.status === 'CLOSED' ? '✓ CLOSED' : caseInfo.status}
-        </span>
+      <div className="text-xs text-ink-muted mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span>Status:</span>
+          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+            caseInfo.status === 'CLOSED'
+              ? 'bg-[#1B4D3E] text-white border border-[#1B4D3E]/30'
+              : caseInfo.status === 'ANALYZED' 
+              ? 'bg-accent-subtle text-accent border border-accent/20'
+              : caseInfo.status === 'ANALYZING'
+              ? 'bg-risk-medium-bg text-risk-medium border border-risk-medium/15 animate-pulse'
+              : 'bg-surface-sunken text-ink-secondary border border-border-hairline'
+          }`}>
+            {caseInfo.status === 'CLOSED' ? '✓ CLOSED' : caseInfo.status}
+          </span>
+        </div>
+
+        {caseInfo.status !== 'ANALYZED' && caseInfo.status !== 'ANALYZING' && (
+          <button 
+            onClick={startAnalysis} 
+            disabled={isAnalysisDisabled}
+            className="text-xs bg-accent hover:bg-accent-hover text-accent-fg disabled:bg-surface-sunken disabled:text-ink-muted disabled:cursor-not-allowed rounded-lg px-4 py-1.5 font-bold transition shadow-sm flex items-center gap-1.5"
+          >
+            ⚡ Analyze Case Now
+          </button>
+        )}
       </div>
 
       {/* Global Live Task Banner */}
@@ -276,19 +289,20 @@ export default function CaseDetailPage() {
         </div>
       )}
 
-      {/* Navigation Tab Bar */}
-      <div className="flex gap-1 border-b border-border mb-6 overflow-x-auto scrollbar-none">
-        {TABS.map((tab) => {
+      {/* 4 HERO NAVIGATION TABS */}
+      <div className="flex gap-2 border-b border-border mb-6 overflow-x-auto scrollbar-none pb-1">
+        {TABS.map((tab, idx) => {
           const tabLocked = ANALYSIS_REQUIRED_TABS.includes(tab) && caseInfo.status !== 'ANALYZED';
           return (
             <button 
               key={tab} 
               onClick={() => setActiveTab(tab)}
-              className={`px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition flex items-center gap-1.5
+              className={`px-4 py-2.5 text-xs font-bold rounded-t-xl transition flex items-center gap-2 border-t border-x -mb-px
                 ${activeTab === tab 
-                  ? 'border-accent text-ink-primary font-bold' 
-                  : 'border-transparent text-ink-muted hover:text-ink-secondary'}`}
+                  ? 'bg-surface-raised border-border-hairline text-accent shadow-sm' 
+                  : 'bg-surface-sunken border-transparent text-ink-muted hover:text-ink-secondary'}`}
             >
+              <span className="font-mono opacity-60">0{idx + 1}.</span>
               <span>{tab}</span>
               {tabLocked && <span className="text-[10px]" title="Requires Analysis">🔒</span>}
             </button>
@@ -304,7 +318,7 @@ export default function CaseDetailPage() {
               <div className="text-4xl mb-4 animate-spin inline-block">⚙️</div>
               <h3 className="text-base font-bold text-ink-primary mb-2">Analysis in Progress</h3>
               <p className="text-xs text-ink-muted leading-relaxed">
-                The AI models, PageRank algorithms, and money-trail tracing flows are running in the background. You can inspect transactions under the **Transactions** tab while waiting.
+                The AI models, PageRank algorithms, and money-trail tracing flows are running in the background. You can inspect transactions under the **Transaction Ledger** tab while waiting.
               </p>
             </>
           ) : (
@@ -324,7 +338,7 @@ export default function CaseDetailPage() {
               {isAnalysisDisabled && (
                 <p className="text-[11px] text-risk-medium font-semibold mt-2.5 max-w-xs mx-auto">
                   ⚠️ {statements.length === 0 
-                      ? "Please upload a bank statement in the 'Upload' tab first." 
+                      ? "Please upload a bank statement in the 'Upload & Files' tab first." 
                       : "Make sure all statements are successfully parsed (Map Columns if needed) before analyzing."}
                 </p>
               )}
@@ -333,80 +347,27 @@ export default function CaseDetailPage() {
         </div>
       ) : (
         <>
-          {activeTab === 'Overview' && (
+          {activeTab === 'Upload & Files' && <UploadPanel caseId={caseId} onUploaded={handleUploaded} />}
+
+          {activeTab === 'Transaction Ledger' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-surface-raised border border-border-hairline rounded-xl p-4 shadow-card">
-                  <div className="text-xs text-ink-muted font-medium">Transactions</div>
-                  <div className="text-2xl font-bold text-ink-primary mt-1 font-data">{summary?.transaction_count ?? '—'}</div>
-                </div>
-                <div className="bg-surface-raised border border-border-hairline rounded-xl p-4 shadow-card">
-                  <div className="text-xs text-ink-muted font-medium">Total Amount</div>
-                  <div className="text-2xl font-bold text-ink-primary mt-1 font-data">
-                    ₹{summary?.total_amount ? Number(summary.total_amount).toLocaleString('en-IN') : '—'}
-                  </div>
-                </div>
-                <div 
-                  onClick={() => setShowAlertsModal(true)}
-                  className="bg-surface-raised border border-border-hairline rounded-xl p-4 shadow-card cursor-pointer hover:border-accent/40 hover:shadow-md transition-all"
-                >
-                  <div className="text-xs text-ink-muted font-medium flex items-center justify-between">
-                    <span>Forensic Alerts</span>
-                    <span className="text-[10px] text-accent font-semibold tracking-wider">Inspect ➡️</span>
-                  </div>
-                  <div className="text-2xl font-bold text-ink-primary mt-1 font-data">
-                    {summary?.alerts_by_flag 
-                      ? Object.values(summary.alerts_by_flag).reduce((sum, val) => sum + Number(val), 0)
-                      : '—'}
-                  </div>
-                </div>
+              <TransactionsTable caseId={caseId} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <BenfordCard caseId={caseId} />
+                <TimelineChart caseId={caseId} />
               </div>
-
-              <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card">
-                <div className="flex items-center justify-between flex-wrap gap-4">
-                  <div>
-                    <h3 className="text-sm font-semibold text-ink-primary">Forensic Analysis Status</h3>
-                    <p className="text-xs text-ink-muted mt-0.5">
-                      {caseInfo.status === 'ANALYZED' 
-                        ? 'Downstream analysis reports, graph modeling, and ML anomalies have been calculated.'
-                        : 'Downstream forensics, machine learning flags, and AI-driven intelligence are pending.'
-                      }
-                    </p>
-                  </div>
-                  {caseInfo.status !== 'ANALYZED' && caseInfo.status !== 'ANALYZING' && (
-                    <div className="flex flex-col items-end gap-1.5">
-                      <button 
-                        onClick={startAnalysis} 
-                        disabled={isAnalysisDisabled}
-                        className="text-xs bg-accent hover:bg-accent-hover text-accent-fg disabled:bg-surface-sunken disabled:text-ink-muted disabled:cursor-not-allowed rounded-lg px-4 py-2 font-semibold transition shadow-sm"
-                      >
-                        Analyze Case
-                      </button>
-                      {isAnalysisDisabled && (
-                        <span className="text-[10px] text-risk-medium font-semibold">
-                          {statements.length === 0 ? "Upload statements first" : "Statements not ready"}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <BenfordCard caseId={caseId} />
-              <TimelineChart caseId={caseId} />
             </div>
           )}
-          
-          {activeTab === 'Executive Summary' && <ExecutiveSummaryPanel caseId={caseId} />}
-          {activeTab === 'Upload'       && <UploadPanel caseId={caseId} onUploaded={handleUploaded} />}
-          {activeTab === 'Transactions' && <TransactionsTable caseId={caseId} />}
-          {activeTab === 'Suspects'     && <VerdictsPanel caseId={caseId} />}
-          {activeTab === 'Graph'        && <GraphView caseId={caseId} />}
-          {activeTab === 'Money Trail'  && <MoneyTrailTable caseId={caseId} />}
-          {activeTab === 'Entities'     && <EntitiesPanel caseId={caseId} />}
-          {activeTab === 'Ask AI'       && <NLQueryPanel caseId={caseId} />}
-          {activeTab === 'Reports'      && <ReportsPanel caseId={caseId} />}
-          {activeTab === 'Hypothesis'   && <HypothesisEngine caseId={caseId} />}
+
+          {activeTab === 'Cyber-Graph & Suspects' && <GraphView caseId={caseId} />}
+
+          {activeTab === 'Executive AI Report' && (
+            <div className="space-y-6">
+              <ExecutiveSummaryPanel caseId={caseId} />
+              <VerdictsPanel caseId={caseId} />
+              <ReportsPanel caseId={caseId} />
+            </div>
+          )}
         </>
       )}
 
