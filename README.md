@@ -264,7 +264,45 @@ This single script will fully automate:
 
 7. **No cross-case module**: The cross-case entity hit system was intentionally skipped. The syndicate system covers this. Do not add `CrossCasePanel`, `cross_case.py`, or `/cross-case-hits` endpoint.
 
-8. **LLM provider**: `LLM_PROVIDER=template` means no external API calls — responses are template-based. `LLM_PROVIDER=groq` requires `GROQ_API_KEY`.
+8. **LLM provider**: `LLM_PROVIDER=ollama` routes requests to your local Ollama instance (`qwen3:4b`). `LLM_PROVIDER=template` uses offline template fallbacks. `LLM_PROVIDER=groq` uses Groq Cloud API.
+
+---
+
+## 🤖 Local Offline LLM Setup (Ollama with `qwen3:4b`)
+
+To run FinFlow 100% offline using your GPU with local AI reasoning:
+
+### Step 1: Download & Install Ollama
+* **Windows**: Download installer from [ollama.com/download](https://ollama.com/download)
+* **Mac**: Run `brew install ollama`
+* **Linux**: Run `curl -fsSL https://ollama.com/install.sh | sh`
+
+### Step 2: Download the 4B Model (`qwen3:4b`)
+Open your terminal and run this single command to download the model (~2.3 GB):
+```bash
+ollama pull qwen3:4b
+```
+
+### Step 3: Start the Ollama Background Server
+Run this command to start the Ollama server listening on port `11434`:
+```bash
+ollama serve
+```
+*(Or keep the Ollama Desktop App open in your system tray).*
+
+### Step 4: Configure FinFlow `.env`
+Ensure your `.env` file contains:
+```env
+LLM_PROVIDER=ollama
+OLLAMA_URL=http://host.docker.internal:11434/api/chat
+LLM_MODEL_OLLAMA=qwen3:4b
+```
+
+### Step 5: (Optional) Test Model Directly in Terminal
+To chat with `qwen3:4b` directly in your terminal:
+```bash
+ollama run qwen3:4b
+```
 
 ### Common issues and fixes
 
