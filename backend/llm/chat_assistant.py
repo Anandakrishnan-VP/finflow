@@ -12,12 +12,15 @@ from llm.client import (
 logger = logging.getLogger(__name__)
 
 CHAT_SYSTEM_PROMPT = """
-You are FinFlow AI Case Assistant, a forensic investigation expert assisting a Karnataka CID EOW officer.
-You have access to the case context provided below.
+You are FinFlow AI Case Assistant, a forensic investigation expert assisting a Police / CID EOW officer.
+You have access to the case context provided below, including transaction data, high-value transfers, risk scores, and flags.
 
-Provide a precise, professional, and action-oriented response to assist the officer's investigation under Indian laws (BNSS, CrPC, PMLA, FEMA).
-If the officer asks about specific transactions, accounts, roles, or next steps, refer to the case context.
-Avoid speculation. If information is not in the context, clearly state so.
+FORMATTING INSTRUCTIONS:
+- Format your response in clean, professional, highly readable text.
+- Do NOT use Markdown tables (do not use '|---|' or pipes).
+- Use clear section titles, bold key terms, and neat bullet points (-) for listing data.
+- State exact monetary amounts (e.g. ₹20,03,917.00), dates, account IDs, and beneficiary details directly when available.
+- Keep responses concise, direct, and actionable under Indian legal frameworks (BNSS, CrPC, PMLA, FEMA).
 """
 
 def get_template_chat_response(query: str) -> str:
@@ -88,15 +91,24 @@ async def chat_with_case_assistant(
     )
     actions = [dict(r._mapping) for r in actions_q.fetchall()]
 
-    # 5. Fetch Suspect Details if provided
+    # 5. Fetch Top High-Value Transactions for context
+    top_txns_q = await db.execute(
+        text("""SELECT account_id, TO_CHAR(txn_date, 'YYYY-MM-DD') as txn_date, amount, txn_type, narration 
+                FROM transactions 
+                WHERE case_id = :cid 
+                ORDER BY amount DESC 
+                LIMIT 25"""),
+        {"cid": case_id}
+    )
+    top_txns = [dict(r._mapping) for r in top_txns_q.fetchall()]
+
+    # 6. Fetch Suspect Details if provided
     suspect_info = None
     if suspect_id:
-        # Try to find from account_verdicts
         s_verdict = next((v for v in verdicts if v["account_id"] == suspect_id), None)
         s_score = s_verdict["composite_score"] if s_verdict else 50
         s_role = s_verdict["role_label"] if s_verdict else "Mule / Layer"
         
-        # Try to find holder name from statements/transactions
         h_q = await db.execute(
             text("SELECT DISTINCT account_holder FROM statements WHERE case_id=:cid AND account_id=:aid"),
             {"cid": case_id, "aid": suspect_id}
@@ -119,8 +131,9 @@ async def chat_with_case_assistant(
             "status": case_row.status
         },
         "accounts": verdicts,
-        "alerts_summary": alerts[:30],  # cap to avoid huge token payload
+        "alerts_summary": alerts[:30],
         "next_actions": actions,
+        "top_high_value_transactions": top_txns,
         "focused_suspect": suspect_info
     }
 

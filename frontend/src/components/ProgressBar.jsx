@@ -11,16 +11,18 @@ export default function ProgressBar({ taskId, onComplete, onFailure }) {
 
   return (
     <div>
-      <div className="flex justify-between text-xs text-ink-secondary mb-1">
-        <span>{stage || 'Connecting...'}</span>
-        <span className="font-data font-semibold">{progress}%</span>
+      <div className="flex justify-between text-xs font-semibold text-ink-primary mb-1.5">
+        <span className="text-ink-primary">{stage || 'Connecting to forensic engine...'}</span>
+        <span className="font-mono font-bold text-accent">{progress}%</span>
       </div>
-      <div className="w-full bg-surface-sunken rounded-full h-2 overflow-hidden border border-border-hairline">
-        <div className={`h-2 rounded-full transition-all ${status === 'failed' ? 'bg-risk-high' : 'bg-accent'}`}
-             style={{ width: `${Math.max(progress, 2)}%` }} />
+      <div className="w-full bg-surface-sunken rounded-full h-2.5 overflow-hidden border border-border">
+        <div 
+          className={`h-2.5 rounded-full transition-all duration-300 ${status === 'failed' ? 'bg-risk-high' : 'bg-accent'}`}
+          style={{ width: `${Math.max(progress, 2)}%` }} 
+        />
       </div>
-      {status === 'disconnected' && <div className="text-xs text-risk-medium mt-1 font-semibold">Reconnecting...</div>}
-      {status === 'failed' && <div className="text-xs text-risk-high mt-1 font-semibold">{error || 'Analysis failed'}</div>}
+      {status === 'disconnected' && <div className="text-xs text-amber-500 mt-1.5 font-bold">⚠️ Reconnecting to backend...</div>}
+      {status === 'failed' && <div className="text-xs text-red-500 mt-1.5 font-bold">❌ {error || 'Analysis failed'}</div>}
     </div>
   );
 }

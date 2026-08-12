@@ -77,8 +77,14 @@ async def _call_template(response_key: str, analysis: dict = None) -> str:
         return templates.get(response_key, "Response unavailable in template mode.")
 
 
+def get_ollama_urls() -> list[str]:
+    urls = [OLLAMA_URL]
+    for host in ["192.168.65.254", "172.17.0.1", "172.18.0.1", "127.0.0.1", "localhost"]:
+        urls.append(f"http://{host}:11434/api/chat")
+    return urls
+
 async def _call_ollama(prompt: str, system: str = None, messages: list = None) -> str:
-    """Call local Ollama server. Returns response text or raises."""
+    """Call local Ollama server with IP fallback. Returns response text or raises."""
     if messages is None:
         msgs = []
         if system:
@@ -86,23 +92,31 @@ async def _call_ollama(prompt: str, system: str = None, messages: list = None) -
         msgs.append({"role": "user", "content": prompt})
     else:
         msgs = messages
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(
-                OLLAMA_URL,
-                json={
-                    "model": LLM_MODEL_OLLAMA,
-                    "messages": msgs,
-                    "stream": False,
-                    "options": {"temperature": 0.2}
-                }
-            )
-            r.raise_for_status()
-            data = r.json()
-            return data["message"]["content"]
-    except Exception as e:
-        logger.warning("Ollama call failed: %s — falling back to template", e)
-        raise
+
+    possible_urls = get_ollama_urls()
+    last_err = None
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        for url in possible_urls:
+            try:
+                r = await client.post(
+                    url,
+                    json={
+                        "model": LLM_MODEL_OLLAMA,
+                        "messages": msgs,
+                        "stream": False,
+                        "options": {"temperature": 0.2}
+                    }
+                )
+                r.raise_for_status()
+                data = r.json()
+                return data["message"]["content"]
+            except Exception as e:
+                last_err = e
+                continue
+
+    logger.warning("Ollama call failed on all endpoints: %s — falling back to template", last_err)
+    raise last_err
 
 
 async def _call_groq_tokenized(analysis: dict, prompt_template: str) -> str:

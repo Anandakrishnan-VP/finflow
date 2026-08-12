@@ -260,17 +260,17 @@ export default function CaseDetailPage() {
 
       {/* Global Live Task Banner */}
       {taskId && (
-        <div className="bg-surface-shading text-accent-fg p-5 rounded-xl mb-6 shadow-card border border-border-hairline relative">
+        <div className="bg-surface-raised border-2 border-accent/30 p-5 rounded-xl mb-6 shadow-md relative">
           <button 
             onClick={() => setTaskId(null)}
-            className="absolute top-3 right-3 text-accent-fg/70 hover:text-accent-fg text-sm font-bold"
+            className="absolute top-3 right-3 text-ink-muted hover:text-ink-primary text-sm font-bold p-1"
             title="Dismiss status banner"
           >
             ✕
           </button>
-          <div className="mb-3 flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-accent-fg border-t-transparent rounded-full animate-spin"></div>
-            <span className="text-xs font-semibold uppercase tracking-wider text-accent-fg/80">
+          <div className="mb-3 flex items-center gap-2.5">
+            <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-xs font-extrabold uppercase tracking-wider text-accent">
               Forensic Engines & ML Models Running
             </span>
           </div>

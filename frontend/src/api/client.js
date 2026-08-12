@@ -4,7 +4,7 @@ const apiClient  = axios.create({ baseURL: '/api' });
 const authClient = axios.create({ baseURL: '/auth' });
 
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
+  const token = sessionStorage.getItem('access_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -23,9 +23,9 @@ apiClient.interceptors.response.use(
       config._retried = true;
       isRefreshing = true;
       try {
-        const refresh_token = localStorage.getItem('refresh_token');
+        const refresh_token = sessionStorage.getItem('refresh_token');
         const { data } = await authClient.post('/refresh', null, { params: { refresh_token } });
-        localStorage.setItem('access_token', data.access_token);
+        sessionStorage.setItem('access_token', data.access_token);
         refreshQueue.forEach(({ resolve, config: c }) => {
           c.headers.Authorization = `Bearer ${data.access_token}`;
           resolve(apiClient(c));
@@ -36,8 +36,8 @@ apiClient.interceptors.response.use(
       } catch (refreshError) {
         refreshQueue.forEach(({ reject: rej }) => rej(refreshError));
         refreshQueue = [];
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
+        sessionStorage.removeItem('access_token');
+        sessionStorage.removeItem('refresh_token');
         window.location.href = '/login';
         return Promise.reject(refreshError);
       } finally {

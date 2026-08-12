@@ -16,14 +16,18 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
+    // Purge legacy persistent tokens from localStorage
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+
+    const token = sessionStorage.getItem('access_token');
     if (token) {
       const payload = decodeJwt(token);
       if (payload && payload.exp * 1000 > Date.now()) {
         setUser({ id: payload.sub, username: payload.username, role: payload.role });
       } else {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
+        sessionStorage.removeItem('access_token');
+        sessionStorage.removeItem('refresh_token');
       }
     }
     setLoading(false);
@@ -31,15 +35,15 @@ export function AuthProvider({ children }) {
 
   const login = async (username, password) => {
     const { data } = await authClient.post('/login', { username, password });
-    localStorage.setItem('access_token', data.access_token);
-    localStorage.setItem('refresh_token', data.refresh_token);
+    sessionStorage.setItem('access_token', data.access_token);
+    sessionStorage.setItem('refresh_token', data.refresh_token);
     const payload = decodeJwt(data.access_token);
     setUser({ id: payload.sub, username: payload.username, role: payload.role });
   };
 
   const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+    sessionStorage.removeItem('access_token');
+    sessionStorage.removeItem('refresh_token');
     setUser(null);
   };
 
