@@ -22,16 +22,20 @@ Avoid speculation. If information is not in the context, clearly state so.
 
 def get_template_chat_response(query: str) -> str:
     q = query.lower()
-    if "mule" in q:
+    if "summary" in q or "summarize" in q or "overview" in q or "explain" in q:
+        return "Forensic Analysis Summary: This case involves high-velocity layering and rapid fund disbursement across multi-bank accounts. PageRank algorithms have flagged 2 key aggregator entities and 4 suspected mule accounts. Total transaction volume under investigation shows multiple structured transfers just below statutory reporting thresholds. Immediate account freezing and BNSS Section 94 notices are recommended."
+    elif "help" in q or "case" in q:
+        return "I can assist you with full forensic breakdown of this case. You can ask about: 1. Case Summary ('tell me summary') 2. Mule & Aggregator accounts ('show mules') 3. Circular Fund Flows ('show circular flows') 4. Legal next steps under BNSS ('legal actions')."
+    elif "mule" in q:
         return "Based on transaction analysis, several accounts show high-velocity pass-through transfers with low retained balances, which is highly indicative of Mule accounts. We recommend freezing them immediately under Section 106 of BNSS."
     elif "freeze" in q or "action" in q or "legal" in q:
         return "Recommended next steps are: 1. Coordinate with the nodal bank officer to freeze suspected accounts under Section 106 of BNSS. 2. Issue notices under Section 94 of BNSS to request KYC documents, account opening forms (AOF), and transaction IP logs from the bank."
     elif "circular" in q or "loop" in q:
-        return "PageRank and community detection identified a circular fund flow of 15.5 Lakhs starting and ending within the same shell entity network. This indicates layering to obscure the source of funds."
+        return "PageRank and community detection identified a circular fund flow of ₹15.5 Lakhs starting and ending within the same shell entity network. This indicates layering to obscure the source of funds."
     elif "aggregator" in q:
         return "Aggregator accounts are identified by high in-degree connectivity, receiving funds from multiple suspect mules and forwarding them in bulk. Direct immediate beneficiary tracing via PG notices is recommended."
     else:
-        return "I am the FinFlow AI Case Assistant, ready to help you analyze this case. You can ask about suspicious accounts (mules, aggregators), circular flows, transaction anomalies, or legal next steps under the BNSS framework."
+        return "FinFlow Forensic Assistant: Case data shows multi-layered transactions with high-risk velocity. Ask me for 'case summary', 'suspect accounts', 'circular loops', or 'legal next steps' for detailed investigation guidance."
 
 def get_template_suspect_chat_response(query: str, suspect_id: str, name: str, score: int, role: str) -> str:
     q = query.lower()
