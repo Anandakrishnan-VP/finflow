@@ -55,11 +55,11 @@ HEADER_PATTERNS = {
         r"payment\s*details", r"\bremarks\b", r"\binfo\b", r"narrative"
     ],
     "debit": [
-        r"\bdebit\b", r"\bdebits\b", r"debit\s*amt\.?", r"debit\s*amount", r"\bwithdrawal\b", r"\bwithdrawals\b", r"\bpayment\b", r"\bdr\b", r"\bwithdraw\b", r"\bout\b", r"\bpaid\b",
+        r"\bdebit\b", r"\bdebits\b", r"debit\s*amt\.?", r"debit\s*amount", r"\bwithdrawal\b", r"\bwithdrawals\b", r"\bpayment\b", r"\bdr\b", r"dr_amt", r"dr\s*amt", r"\bwithdraw\b", r"\bout\b", r"\bpaid\b",
         r"amount\s*debit", r"withdrawal\s*amt", r"debited"
     ],
     "credit": [
-        r"\bcredit\b", r"\bcredits\b", r"credit\s*amt\.?", r"credit\s*amount", r"\bdeposit\b", r"\bdeposits\b", r"\breceipt\b", r"\bcr\b", r"\bin\b", r"\breceived\b",
+        r"\bcredit\b", r"\bcredits\b", r"credit\s*amt\.?", r"credit\s*amount", r"\bdeposit\b", r"\bdeposits\b", r"\breceipt\b", r"\bcr\b", r"cr_amt", r"cr\s*amt", r"\bin\b", r"\breceived\b",
         r"amount\s*credit", r"deposit\s*amt", r"credited"
     ],
     "amount": [
@@ -69,7 +69,7 @@ HEADER_PATTERNS = {
         r"\bbalance\b", r"\bbal\b", r"running\s*balance", r"balance\s*\(rs\)", r"balance\s*\(inr\)", r"balance\s*amt\.?", r"balance\s*amount", r"outstanding"
     ],
     "ref": [
-        r"ref", r"chq", r"cheque", r"instrument", r"trn", r"id", r"reference", r"utr", r"txn\s*ref", r"ref\s*num"
+        r"ref", r"chq", r"cheque", r"instrument", r"trn", r"id", r"reference", r"utr", r"txn\s*ref", r"ref\s*num", r"tran_id"
     ]
 }
 

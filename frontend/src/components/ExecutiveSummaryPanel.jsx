@@ -2,25 +2,43 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { apiClient } from '../api/client';
 
-// Helper to render account IDs as clickable router Link badges
+// Helper to render account IDs as clickable router Link badges and format Markdown cleanly
 const renderMessageContent = (text, caseId) => {
   if (!text) return '';
-  const regex = /\b(ACC-[A-Za-z0-9\-]+|STATEMENT-[A-Za-z0-9\-]+|[A-Za-z0-9_\.\-]{2,}@[A-Za-z0-9_\.\-]{2,})\b/g;
-  const parts = text.split(regex);
-  return parts.map((part, index) => {
-    if (part.includes('@') || part.startsWith('ACC-') || part.startsWith('STATEMENT-')) {
-      return (
-        <Link
-          key={index}
-          to={`/cases/${caseId}/suspects/${part}`}
-          className="text-accent hover:underline font-mono bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded text-[10px] font-bold mx-0.5 inline-block align-middle"
-        >
-          {part.startsWith('STATEMENT-') ? `Account ...${part.replace('STATEMENT-', '').slice(0, 4)}` : part}
-        </Link>
-      );
-    }
-    return part;
-  });
+  const lines = text.split('\n');
+  return lines.map((line, lIdx) => {
+    // Skip raw table header delimiters like |---|---|
+    if (/^\s*\|?\s*[:\-]+\s*\|/.test(line)) return null;
+
+    // Clean leading/trailing pipes from markdown tables
+    let cleanLine = line.replace(/^\s*\|\s*/, '').replace(/\s*\|\s*$/, '').replace(/\s*\|\s*/g, ' — ');
+    
+    // Parse bold text **word** and Account links
+    const parts = cleanLine.split(/(\*\*.*?\*\*|\b(?:ACC-[A-Za-z0-9\-]+|STATEMENT-[A-Za-z0-9\-]+|[A-Za-z0-9_\.\-]{2,}@[A-Za-z0-9_\.\-]{2,})\b)/g);
+    
+    return (
+      <div key={lIdx} className="my-0.5 min-h-[1.2em]">
+        {parts.map((part, pIdx) => {
+          if (!part) return null;
+          if (part.startsWith('**') && part.endsWith('**')) {
+            return <strong key={pIdx} className="font-bold text-ink-primary">{part.slice(2, -2)}</strong>;
+          }
+          if (part.includes('@') || part.startsWith('ACC-') || part.startsWith('STATEMENT-')) {
+            return (
+              <Link
+                key={pIdx}
+                to={`/cases/${caseId}/suspects/${part}`}
+                className="text-accent hover:underline font-mono bg-accent/10 border border-accent/20 px-1.5 py-0.5 rounded text-[10px] font-bold mx-0.5 inline-block align-middle"
+              >
+                {part.startsWith('STATEMENT-') ? `Account ...${part.replace('STATEMENT-', '').slice(0, 4)}` : part}
+              </Link>
+            );
+          }
+          return part;
+        })}
+      </div>
+    );
+  }).filter(Boolean);
 };
 
 const FACTOR_LABELS = {
@@ -57,11 +75,35 @@ export default function ExecutiveSummaryPanel({ caseId }) {
 
   // AI Chat states
   const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState([
-    { role: 'assistant', content: 'Officer, I have analyzed the case transactions. How can I assist you with the investigation today?' }
-  ]);
+  const [chatMessages, setChatMessages] = useState(() => {
+    const saved = sessionStorage.getItem(`finflow_chat_${caseId}`);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to restore chat messages:', e);
+      }
+    }
+    return [
+      { role: 'assistant', content: 'Officer, I have analyzed the case transactions. How can I assist you with the investigation today?' }
+    ];
+  });
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    if (chatMessages && chatMessages.length > 0) {
+      sessionStorage.setItem(`finflow_chat_${caseId}`, JSON.stringify(chatMessages));
+    }
+  }, [chatMessages, caseId]);
+
+  const clearChatHistory = () => {
+    const initial = [
+      { role: 'assistant', content: 'Officer, I have analyzed the case transactions. How can I assist you with the investigation today?' }
+    ];
+    setChatMessages(initial);
+    sessionStorage.removeItem(`finflow_chat_${caseId}`);
+  };
 
   // Download PDF loading
   const [downloading, setDownloading] = useState(false);
@@ -457,7 +499,15 @@ export default function ExecutiveSummaryPanel({ caseId }) {
         <div className="space-y-6">
           {/* Interactive AI Case Assistant */}
           <div className="bg-surface-raised border border-border-hairline rounded-xl p-5 shadow-card flex flex-col h-[560px]">
-            <div className="font-bold text-ink-primary text-base border-b border-border-hairline pb-2 mb-3">AI Case Assistant</div>
+            <div className="flex justify-between items-center border-b border-border-hairline pb-2 mb-3">
+              <div className="font-bold text-ink-primary text-base">AI Case Assistant</div>
+              <button
+                onClick={clearChatHistory}
+                className="text-[10px] text-ink-muted hover:text-ink-primary font-semibold px-2 py-0.5 rounded border border-border hover:bg-surface-sunken transition-colors"
+              >
+                Clear Chat
+              </button>
+            </div>
             
             {/* Chat message space */}
             <div className="flex-1 overflow-y-auto space-y-3 pr-1 mb-3 scrollbar-thin">

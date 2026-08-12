@@ -18,7 +18,7 @@ export function useWebSocket(taskId) {
     // [FIX] Protocol MUST match the page's protocol. A hardcoded 'ws://' fails
     // silently (mixed-content block) behind nginx's HTTPS termination (RULE 12).
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const token = localStorage.getItem('access_token') || '';
+    const token = sessionStorage.getItem('access_token') || '';
     // nginx location /ws/ proxies straight through with the prefix intact —
     // matches @app.websocket("/ws/analysis/{task_id}") in main.py exactly.
     return `${protocol}//${window.location.host}/ws/analysis/${taskId}?token=${encodeURIComponent(token)}`;

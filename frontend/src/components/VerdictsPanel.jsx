@@ -27,6 +27,34 @@ const FACTOR_COLORS = {
   betweenness: 'bg-ink-secondary',
 };
 
+const formatReasoningText = (text) => {
+  if (!text) return null;
+  // Clean raw quotes, hashes, and asterisks
+  const clean = text.replace(/^"|"$/g, '').trim();
+  const lines = clean.split('\n').filter(l => l.trim().length > 0);
+
+  return (
+    <div className="space-y-1.5 text-xs text-ink-primary font-normal leading-relaxed text-left">
+      {lines.map((line, idx) => {
+        // Strip markdown headers ### or **
+        let raw = line.replace(/^###?\s*/, '').trim();
+        const parts = raw.split(/(\*\*.*?\*\*)/g);
+
+        return (
+          <p key={idx} className={raw.startsWith('-') || raw.startsWith('*') ? 'pl-2' : ''}>
+            {parts.map((p, pIdx) => {
+              if (p.startsWith('**') && p.endsWith('**')) {
+                return <strong key={pIdx} className="font-bold text-ink-primary">{p.slice(2, -2)}</strong>;
+              }
+              return p;
+            })}
+          </p>
+        );
+      })}
+    </div>
+  );
+};
+
 export default function VerdictsPanel({ caseId }) {
   const [verdicts, setVerdicts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,27 +126,24 @@ export default function VerdictsPanel({ caseId }) {
             >
               {/* Card Header */}
               <div className="px-5 py-4 border-b border-border-hairline bg-surface-sunken/40 flex flex-wrap gap-4 items-center justify-between">
-                <div className="space-y-1 text-left">
+                <div className="space-y-1 text-left max-w-xl">
                   <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-sm font-bold text-ink-primary">
                       {v.account_holder || 'Unnamed Suspect'}
                     </span>
                     <span className="text-xs text-ink-muted">|</span>
-                    <Link
-                      to={`/cases/${caseId}/suspects/${v.account_id}`}
-                      className="font-mono text-xs font-semibold text-accent hover:text-accent-hover hover:underline transition-colors bg-accent/5 px-2 py-0.5 rounded border border-accent/15"
-                    >
+                    <span className="font-mono text-xs font-semibold text-accent bg-accent/5 px-2 py-0.5 rounded border border-accent/15">
                       {v.account_id}
-                    </Link>
+                    </span>
                     <span className={`text-[9px] font-extrabold tracking-wider px-2 py-0.5 rounded-full uppercase ${TIER_COLORS[v.agreement_tier] || 'bg-surface-sunken text-ink-secondary border border-border-hairline'}`}>
                       {v.agreement_tier.replace(/_/g, ' ')}
                     </span>
                   </div>
 
-                  <div className="text-[10px] text-ink-muted font-mono uppercase tracking-wider flex items-center gap-2">
+                  <div className="text-[10px] text-ink-muted font-mono uppercase tracking-wider flex items-center gap-2 flex-wrap">
                     <span>{v.bank_name || 'Unknown Bank'}</span>
                     <span>•</span>
-                    <span className="text-accent font-semibold">{v.role_label} ({v.tier_label})</span>
+                    <span className="text-accent font-semibold">{v.role_label}</span>
                   </div>
                 </div>
 
@@ -176,8 +201,8 @@ export default function VerdictsPanel({ caseId }) {
                     </h4>
 
                     {isLlmReviewed ? (
-                      <div className="bg-surface-sunken border border-border-hairline rounded-lg p-3 text-xs text-ink-secondary leading-relaxed italic">
-                        "{v.llm_reasoning}"
+                      <div className="bg-surface-sunken/60 border border-border-hairline rounded-lg p-4 text-xs max-h-80 overflow-y-auto scrollbar-thin">
+                        {formatReasoningText(v.llm_reasoning)}
                       </div>
                     ) : (
                       <div className="bg-surface-sunken/30 border border-dashed border-border rounded-lg p-4 text-center">
@@ -205,35 +230,18 @@ export default function VerdictsPanel({ caseId }) {
                     )}
                   </div>
 
-                  {isLlmReviewed ? (
+                  {isLlmReviewed && (
                     <div className="mt-4 pt-3 border-t border-border-hairline flex items-center justify-between">
                       <span className="text-[10px] text-ink-muted">
                         Audited: {v.reviewed_at ? new Date(v.reviewed_at).toLocaleString() : '—'}
                       </span>
-                      <div className="flex items-center gap-3">
-                        <button
-                          disabled={runningOpinion[v.account_id]}
-                          onClick={() => triggerSecondOpinion(v.account_id)}
-                          className="text-[11px] text-ink-secondary hover:text-ink-primary font-semibold transition-colors"
-                        >
-                          {runningOpinion[v.account_id] ? 'Auditing...' : 'Re-run AI Audit'}
-                        </button>
-                        <Link
-                          to={`/cases/${caseId}/suspects/${v.account_id}`}
-                          className="text-[11px] text-accent hover:text-accent-hover font-bold transition-colors uppercase tracking-wider flex items-center gap-1"
-                        >
-                          View Suspect Profile →
-                        </Link>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-4 pt-3 border-t border-border-hairline/40 flex justify-end">
-                      <Link
-                        to={`/cases/${caseId}/suspects/${v.account_id}`}
-                        className="text-[11px] text-accent hover:text-accent-hover font-bold transition-colors uppercase tracking-wider flex items-center gap-1"
+                      <button
+                        disabled={runningOpinion[v.account_id]}
+                        onClick={() => triggerSecondOpinion(v.account_id)}
+                        className="text-[11px] text-accent hover:text-accent-hover font-bold transition-colors"
                       >
-                        View Suspect Profile →
-                      </Link>
+                        {runningOpinion[v.account_id] ? 'Auditing...' : 'Re-run AI Audit'}
+                      </button>
                     </div>
                   )}
                 </div>

@@ -18,33 +18,36 @@ A full-stack forensic analysis platform for detecting financial crimes (money la
 
 ---
 
-## Architecture Overview
-
+```mermaid
+graph TD
+    Client["User Browser (HTTPS :3000)"] --> Nginx["Nginx Reverse Proxy (TLS Termination & Rate Limiting)"]
+    
+    Nginx -->|"REST / Auth / WS"| Backend["FastAPI Core Service (:8000)"]
+    Nginx -->|"/api/gateway/upload"| JavaGateway["Java 21 Ingestion Gateway (:8080)"]
+    
+    JavaGateway -->|"Virtual Threads (Loom) High-Concurrency Ingestion"| Storage["Shared Storage (/data/uploads)"]
+    Storage --> Backend
+    
+    Backend -->|"Task Queue"| Redis["Redis Broker"]
+    Redis --> Worker["Celery Analysis Worker"]
+    
+    Worker -->|"Relational Data"| Postgres["PostgreSQL Database"]
+    Worker -->|"Graph Analytics (PageRank, Louvain)"| Neo4j["Neo4j Graph Database"]
+    Worker -->|"ML Anomaly Ensemble"| MLEngine["ML Models (IF + LOF + LightGBM)"]
+    Worker -->|"Local LLM / VLM Inference"| Ollama["Local Ollama GPU Service (:11434)"]
+    
+    Ollama --> QwenLLM["qwen3:4b (LLM Reasoning & Legal Briefs)"]
+    Ollama --> QwenVLM["Qwen2-VL-2B (VLM Visual Document Parser)"]
 ```
-Browser (HTTPS :3000)
-      │
-   [Nginx]  ← TLS termination, 500MB upload limit, rate limiting
-      ├── /api/*      → FastAPI Backend (port 8000)
-      ├── /auth/*     → Auth router (rate-limited: 5 req/min)
-      ├── /ws/*       → WebSocket (live analysis progress)
-      └── /*          → React SPA (Vite)
 
-FastAPI Backend
-  ├── PostgreSQL     ← Transactions, verdicts, alerts, cases
-  ├── Neo4j          ← Account graph (PageRank, Louvain, taint propagation)
-  ├── Redis          ← Celery task broker + result backend
-  └── Celery Worker  ← ML pipeline runs here (async, not in FastAPI)
+### Microservices Infrastructure
 
-ML Pipeline (per analysis run)
-  ├── Isolation Forest  (pre-trained, 300 estimators)
-  ├── LightGBM          (pre-trained, 500 estimators)
-  ├── Local Outlier Factor (fit per-run, density-based)
-  └── Ensemble fusion   (40% IF + 35% LGBM + 25% LOF)
-
-Graph Visualization Engine (Frontend)
-  ├── D3.js             ← Case-level interactive network (Force-Directed, Radial concentric, Sankey flow)
-  └── Cytoscape.js      ← Suspect-level localized neighborhood & cycle visualization
-```
+* **Java 21 Ingestion Gateway (`ingestion-gateway:8080`)**: Built on Java 21 (Spring Boot 3 + Project Loom / Virtual Threads) to handle ultra-high concurrency file uploads, multi-part document chunking, and instant SHA-256 integrity hashing without blocking I/O threads.
+* **FastAPI Core Backend (`backend:8000`)**: Python 3.12 API engine managing case management, transactional data routes, Benford's Law analysis, rule engine processing, and live WebSocket broadcasts.
+* **Celery Worker Engine (`worker`)**: Asynchronous distributed worker executing the ML anomaly ensemble, Neo4j graph algorithms, and local Ollama AI prompts.
+* **ML Pipeline Ensemble**: 3-model hybrid fusion combining Isolation Forest (40%), LightGBM (35%), and Local Outlier Factor (25%).
+* **Graph Analytics Engine**: Dual D3.js (Force-directed, Radial, Sankey flow) and Cytoscape.js localized neighborhood visualizers powered by Neo4j graph data.
+* **Dual Local AI Engine (Ollama)**: Local GPU-accelerated inference pairing **Qwen2-VL-2B** (Visual document parsing) and **Qwen3-4B** (Reasoning, legal notice generation, and interactive case assistant).
 
 ---
 
@@ -268,20 +271,26 @@ This single script will fully automate:
 
 ---
 
-## 🤖 Local Offline LLM Setup (Ollama with `qwen3:4b`)
+## Dual Local AI Engine Setup (Ollama VLM & LLM)
 
-To run FinFlow 100% offline using your GPU with local AI reasoning:
+To run FinFlow 100% offline using local GPU acceleration:
 
 ### Step 1: Download & Install Ollama
 * **Windows**: Download installer from [ollama.com/download](https://ollama.com/download)
 * **Mac**: Run `brew install ollama`
 * **Linux**: Run `curl -fsSL https://ollama.com/install.sh | sh`
 
-### Step 2: Download the 4B Model (`qwen3:4b`)
-Open your terminal and run this single command to download the model (~2.3 GB):
-```bash
-ollama pull qwen3:4b
-```
+### Step 2: Download the Dual Local AI Models
+Open your terminal and run these commands to download the models:
+
+1. **Local Vision Model (Qwen2-VL)** for visual statement scanning:
+   ```bash
+   ollama pull hf.co/bartowski/Qwen2-VL-2B-Instruct-GGUF
+   ```
+2. **Local Reasoning LLM (Qwen3-4B)** for forensic case narratives & legal advice:
+   ```bash
+   ollama pull qwen3:4b
+   ```
 
 ### Step 3: Start the Ollama Background Server
 Run this command to start the Ollama server listening on port `11434`:
@@ -296,9 +305,10 @@ Ensure your `.env` file contains:
 LLM_PROVIDER=ollama
 OLLAMA_URL=http://host.docker.internal:11434/api/chat
 LLM_MODEL_OLLAMA=qwen3:4b
+VLM_MODEL_OLLAMA=hf.co/bartowski/Qwen2-VL-2B-Instruct-GGUF
 ```
 
-### Step 5: (Optional) Test Model Directly in Terminal
+### Step 5: (Optional) Test Models Directly in Terminal
 To chat with `qwen3:4b` directly in your terminal:
 ```bash
 ollama run qwen3:4b

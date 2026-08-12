@@ -124,37 +124,42 @@ export default function UploadPanel({ caseId, onUploaded }) {
   }, [statements, caseId, onUploaded]);
 
   const handleUpload = async () => {
+    if (files.length === 0) return;
     setUploading(true);
-    const formData = new FormData();
-    formData.append('case_id', caseId);
-    files.forEach((file) => formData.append('files', file));
+    const failedStmts = [];
 
-    try {
-      // High-concurrency Java 21 Virtual Threads Gateway upload
-      await apiClient.post('/gateway/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      await fetchStatements();
-    } catch (gatewayErr) {
-      // Fallback to standard endpoint if needed
-      for (const file of files) {
-        const singleForm = new FormData();
-        singleForm.append('file', file);
-        try {
-          const override = bankOverride[file.name];
-          const params = override ? { bank_override: override } : {};
-          await apiClient.post(`/cases/${caseId}/statements`, singleForm, {
-            params, headers: { 'Content-Type': 'multipart/form-data' },
-          });
-          await fetchStatements();
-        } catch (err) {
-          const detail = err.response?.data?.detail || 'Upload failed';
-          setStatements((s) => [...s, { filename: file.name, status: 'FAILED', error: detail }]);
-        }
+    for (const file of files) {
+      const singleForm = new FormData();
+      singleForm.append('file', file);
+      try {
+        const override = bankOverride[file.name];
+        const params = override ? { bank_override: override } : {};
+        await apiClient.post(`/cases/${caseId}/statements`, singleForm, {
+          params, headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      } catch (err) {
+        const detail = err.response?.data?.detail;
+        const msg = typeof detail === 'object' ? detail.message : (detail || 'Upload failed');
+        failedStmts.push({
+          id: `err-${Math.random()}`,
+          filename: file.name,
+          status: 'FAILED',
+          error: msg
+        });
       }
     }
+
     setFiles([]);
     setUploading(false);
+
+    try {
+      const { data } = await apiClient.get(`/cases/${caseId}/statements`);
+      setStatements([...failedStmts, ...data]);
+    } catch (err) {
+      if (failedStmts.length > 0) {
+        setStatements(failedStmts);
+      }
+    }
   };
 
   const openColumnMapper = async (stmt) => {
@@ -203,6 +208,34 @@ export default function UploadPanel({ caseId, onUploaded }) {
       alert('Reparsing failed: ' + (err.response?.data?.detail || err.message));
     } finally {
       setReparsing(false);
+    }
+  };
+
+  const [vlmParsingId, setVlmParsingId] = useState(null);
+
+  const handleVlmReparse = async (stmt) => {
+    if (!stmt.id) return;
+    setVlmParsingId(stmt.id);
+    try {
+      await apiClient.post(`/cases/${caseId}/statements/${stmt.id}/reparse-vlm`);
+      await fetchStatements();
+      if (onUploaded) onUploaded();
+    } catch (err) {
+      alert('Local AI Vision parsing failed: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setVlmParsingId(null);
+    }
+  };
+
+  const handleDeleteStatement = async (stmt) => {
+    if (!stmt.id) return;
+    if (!confirm(`Are you sure you want to delete "${stmt.filename || 'this statement'}"?`)) return;
+    try {
+      await apiClient.delete(`/cases/${caseId}/statements/${stmt.id}`);
+      await fetchStatements();
+      if (onUploaded) onUploaded();
+    } catch (err) {
+      alert('Failed to delete statement: ' + (err.response?.data?.detail || err.message));
     }
   };
 
@@ -286,28 +319,46 @@ export default function UploadPanel({ caseId, onUploaded }) {
                 </td>
                 <td className="px-4 py-3 text-ink-secondary uppercase text-xs font-semibold">{s.bank || '—'}</td>
                 <td className="px-4 py-3">
-                  {s.status === 'PROCESSING' || s.status === 'PENDING' ? (
-                    <ProcessingStatus statement={s} />
-                  ) : s.status === 'PARSED' ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-accent-subtle text-accent border border-accent/20">
-                        PARSED
-                      </span>
-                      <button onClick={() => openColumnMapper(s)}
-                              className="text-xs bg-surface-sunken hover:bg-border text-ink-secondary border border-border-hairline rounded px-2 py-0.5 font-semibold transition-colors">
-                        ✏️ Adjust Map
-                      </button>
+                  {s.status === 'PROCESSING' || s.status === 'PENDING' || vlmParsingId === s.id ? (
+                    <div className="space-y-1">
+                      {vlmParsingId === s.id ? (
+                        <div className="flex items-center gap-2 text-xs font-bold text-accent animate-pulse bg-accent-subtle/50 border border-accent/20 px-2.5 py-1 rounded-md">
+                          <span className="w-2 h-2 rounded-full bg-accent animate-ping"></span>
+                          ⚡ Local AI Vision Scanning (Qwen2-VL)...
+                        </div>
+                      ) : (
+                        <ProcessingStatus statement={s} />
+                      )}
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-risk-high-bg text-risk-high border border-risk-high/15">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                        s.status === 'PARSED' 
+                          ? 'bg-accent-subtle text-accent border-accent/20' 
+                          : 'bg-risk-high-bg text-risk-high border-risk-high/15'
+                      }`}>
                         {s.status}
                       </span>
+
                       {s.id && (
-                        <button onClick={() => openColumnMapper(s)}
-                                className="text-xs bg-accent hover:bg-accent-hover text-accent-fg font-semibold rounded px-2 py-0.5 shadow-sm transition-colors">
-                          ✏️ Map Columns
-                        </button>
+                        <>
+                          <button onClick={() => openColumnMapper(s)}
+                                  className="text-xs bg-surface-sunken hover:bg-border text-ink-secondary border border-border-hairline rounded px-2 py-0.5 font-semibold transition-colors">
+                            {s.status === 'PARSED' ? '✏️ Adjust Map' : '✏️ Map Columns'}
+                          </button>
+
+                          <button onClick={() => handleVlmReparse(s)}
+                                  title="Reparse this PDF visually using Local Qwen2-VL AI model"
+                                  className="text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 rounded px-2 py-0.5 font-semibold transition-colors flex items-center gap-1 shadow-sm">
+                            👁️ Parse with Local AI ⚡
+                          </button>
+
+                          <button onClick={() => handleDeleteStatement(s)}
+                                  title="Delete this statement file from case"
+                                  className="text-xs text-risk-high hover:bg-risk-high-bg/50 border border-risk-high/20 rounded px-1.5 py-0.5 transition-colors">
+                            🗑️
+                          </button>
+                        </>
                       )}
                     </div>
                   )}
@@ -354,9 +405,16 @@ export default function UploadPanel({ caseId, onUploaded }) {
         <div className="fixed inset-0 bg-surface-shading/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
           <div className="bg-surface-raised rounded-xl shadow-card max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-border-hairline">
             {/* Header */}
-            <div className="px-6 py-4 bg-surface-sunken border-b border-border flex justify-between items-center">
+            <div className="px-6 py-4 bg-surface-sunken border-b border-border flex justify-between items-center flex-wrap gap-2">
               <div>
-                <h3 className="font-semibold text-ink-primary text-lg">Manual Column Mapping</h3>
+                <h3 className="font-semibold text-ink-primary text-lg flex items-center gap-2">
+                  Manual Column Mapping
+                  <button onClick={() => { setMapperStatement(null); handleVlmReparse(mapperStatement); }}
+                          title="Auto-extract all transactions using local Qwen2-VL AI model"
+                          className="text-xs bg-accent/10 hover:bg-accent/20 text-accent border border-accent/30 rounded px-2.5 py-1 font-semibold transition-colors flex items-center gap-1">
+                    👁️ Auto-Extract via Local AI Vision ⚡
+                  </button>
+                </h3>
                 <p className="text-xs text-ink-secondary truncate max-w-lg">{mapperStatement.filename}</p>
               </div>
               <button onClick={() => setMapperStatement(null)} className="text-ink-muted hover:text-ink-primary transition-colors">

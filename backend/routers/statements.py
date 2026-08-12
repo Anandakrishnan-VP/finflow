@@ -396,3 +396,169 @@ async def reparse_statement_file(
     
     return {"statement_id": statement_id, "status": "PROCESSING"}
 
+
+@router.post("/{statement_id}/reparse-vlm")
+async def reparse_statement_vlm_route(
+    case_id: str,
+    statement_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reparse statement visually using Local Qwen2-VL VLM via Ollama."""
+    result = await db.execute(
+        text("SELECT stored_path, original_filename FROM statements WHERE id = :sid AND case_id = :cid"),
+        {"sid": statement_id, "cid": case_id}
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(404, "Statement not found")
+
+    stored_path, filename = row
+    if not os.path.exists(stored_path):
+        raise HTTPException(404, "Statement file not found on disk")
+
+    # Set status to PROCESSING
+    await db.execute(
+        text("""UPDATE statements 
+                SET parse_status = 'PROCESSING', 
+                    parse_progress = 20, 
+                    parse_stage = 'Local AI Vision scanning (Qwen2-VL)...',
+                    parse_error = NULL
+                WHERE id = :sid"""),
+        {"sid": statement_id}
+    )
+    await db.commit()
+
+    try:
+        from parsers.vlm_parser import parse_with_vlm
+        vlm_txns = await parse_with_vlm(stored_path)
+
+        if not vlm_txns:
+            await db.execute(
+                text("""UPDATE statements 
+                        SET parse_status = 'FAILED', 
+                            parse_progress = 100, 
+                            parse_error = 'Local AI Vision extracted 0 transaction rows from document images.'
+                        WHERE id = :sid"""),
+                {"sid": statement_id}
+            )
+            await db.commit()
+            raise HTTPException(422, "Local AI Vision extracted 0 transaction rows.")
+
+        # Delete existing transactions for this statement
+        await db.execute(text("DELETE FROM transactions WHERE statement_id = :sid"), {"sid": statement_id})
+
+        # Insert extracted transactions
+        from uuid import uuid4
+        from datetime import datetime
+        
+        insert_rows = []
+        for t in vlm_txns:
+            t_id = str(uuid4())
+            d_str = t.get("txn_date", "")
+            parsed_dt = datetime.now()
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y"):
+                try:
+                    parsed_dt = datetime.strptime(d_str, fmt)
+                    break
+                except ValueError:
+                    pass
+
+            amt = float(t.get("amount") or 0.0)
+            nar = t.get("narration") or "Local AI extracted transaction"
+            txn_hash = hashlib.sha256(f"{statement_id}|{d_str}|{nar}|{amt}|{t_id}".encode()).hexdigest()
+
+            insert_rows.append({
+                "h": txn_hash,
+                "cid": case_id,
+                "sid": statement_id,
+                "aid": f"ACC-VLM-{statement_id[:8]}",
+                "ah": "Unknown Holder",
+                "bn": "LOCAL_AI_VLM",
+                "td": parsed_dt,
+                "amt": amt,
+                "tt": t.get("txn_type") if t.get("txn_type") in ["DR", "CR"] else "DR",
+                "bal": float(t["balance"]) if t.get("balance") is not None else None,
+                "nar": nar,
+                "cp": None,
+                "cpn": None,
+                "cpb": None,
+                "ch": txn_hash[:64]
+            })
+
+        if insert_rows:
+            await db.execute(
+                text("""INSERT INTO transactions
+                        (txn_hash, case_id, statement_id, account_id, account_holder, bank_name,
+                         txn_date, amount, txn_type, balance_after, narration,
+                         counterparty_account, counterparty_name, counterparty_bank, chain_hash)
+                        VALUES (:h,:cid,:sid,:aid,:ah,:bn,:td,:amt,:tt,:bal,:nar,:cp,:cpn,:cpb,:ch)
+                        ON CONFLICT (statement_id, txn_hash) DO NOTHING"""),
+                insert_rows
+            )
+
+        # Update statement record to PARSED
+        await db.execute(
+            text("""UPDATE statements 
+                    SET parse_status = 'PARSED', 
+                        parse_progress = 100, 
+                        parse_stage = 'Local AI Vision Complete',
+                        bank_name = 'LOCAL_AI_VLM',
+                        row_count = :cnt
+                    WHERE id = :sid"""),
+            {"cnt": len(insert_rows), "sid": statement_id}
+        )
+        await db.commit()
+
+        return {"statement_id": statement_id, "status": "PARSED", "rows_parsed": len(insert_rows), "bank": "LOCAL_AI_VLM"}
+
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.error("VLM reparse failed for statement %s: %s", statement_id, err, exc_info=True)
+        await db.execute(
+            text("""UPDATE statements 
+                    SET parse_status = 'FAILED', 
+                        parse_progress = 100, 
+                        parse_error = :err
+                    WHERE id = :sid"""),
+            {"err": f"VLM Error: {err}", "sid": statement_id}
+        )
+        await db.commit()
+        raise HTTPException(500, f"Local AI Vision parsing failed: {err}")
+
+
+@router.delete("/{statement_id}")
+async def delete_statement_route(
+    case_id: str,
+    statement_id: str,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a single statement file and its transactions from a case."""
+    res = await db.execute(
+        text("SELECT stored_path FROM statements WHERE id = :sid AND case_id = :cid"),
+        {"sid": statement_id, "cid": case_id}
+    )
+    row = res.fetchone()
+    if not row:
+        raise HTTPException(404, "Statement not found")
+
+    stored_path = row[0]
+    
+    # Delete associated transactions
+    await db.execute(text("DELETE FROM transactions WHERE statement_id = :sid"), {"sid": statement_id})
+    # Delete statement
+    await db.execute(text("DELETE FROM statements WHERE id = :sid"), {"sid": statement_id})
+    await db.commit()
+
+    # Remove file from disk
+    if stored_path and os.path.exists(stored_path):
+        try:
+            os.remove(stored_path)
+        except Exception as e:
+            logger.warning("Could not remove stored statement file %s: %s", stored_path, e)
+
+    return {"success": True, "statement_id": statement_id}
+
+
