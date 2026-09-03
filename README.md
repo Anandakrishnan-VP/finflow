@@ -1,9 +1,10 @@
-# FinFlow - Forensic Bank Statement Analysis System
-**Karnataka CID Economic Offences Wing (EOW) - Internal Tool**
+# FinFlow — Forensic Bank Statement Analysis System
 
-A full-stack forensic analysis platform for detecting financial crimes (money laundering, structuring, pass-through mule networks) from bank statement CSVs. Powered by a 3-model ML ensemble, interactive D3.js & Cytoscape.js graph analytics, LLM second opinions, and an AI chat assistant.
+**Karnataka CID Economic Offences Wing (EOW) — Internal Investigation Tool**
 
----
+FinFlow is a full-stack forensic financial analysis platform designed to analyze bank statements and identify suspicious transaction patterns such as money laundering, structuring, pass-through mule activity, and coordinated account networks.
+
+It combines a **3-model ML ensemble, graph analytics, rule-based detection, local LLM/VLM inference, and interactive forensic visualizations** to support investigators in reviewing complex financial transaction networks.
 
 ## Table of Contents
 1. [Architecture Overview](#architecture-overview)
