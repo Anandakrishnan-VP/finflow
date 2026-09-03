@@ -7,31 +7,36 @@ A full-stack forensic analysis platform for detecting financial crimes (money la
 
 ## Table of Contents
 1. [Architecture Overview](#architecture-overview)
-2. [Prerequisites](#prerequisites)
-3. [Quick Start](#quick-start)
-4. [Post-Setup Steps](#post-setup-steps-required-first-time-only)
-5. [Uploading & Analysing Cases](#uploading--analysing-cases)
-6. [Supported Banks](#supported-banks)
-7. [Agent Instructions](#agent-instructions-read-if-you-are-an-ai-agent)
-8. [Troubleshooting](#troubleshooting)
-9. [Architecture Deep-Dive](#architecture-deep-dive)
+2. [Microservices Infrastructure](#microservices-infrastructure)
+3. [Prerequisites](#prerequisites)
+4. [Quick Start & Deployment](#quick-start--one-command-setup)
+5. [Uploading & Case Analysis](#uploading--analysing-cases)
+6. [Supported Banks & Dynamic Generic Parsing](#supported-banks--dynamic-generic-parsing)
+7. [Repository Structure](#repository-structure)
+8. [Dual Local AI Engine Setup (Ollama VLM & LLM)](#dual-local-ai-engine-setup-ollama-vlm--llm)
+9. [Analysis Pipeline & Fraud Typologies](#analysis-pipeline--fraud-typologies)
+10. [System Diagnostics & Operations](#system-diagnostics--operations)
+11. [Docker Services & Port Matrix](#docker-services--port-matrix)
 
 ---
+
+## Architecture Overview
 
 ```mermaid
 graph TD
     Client["User Browser (HTTPS :3000)"] --> Nginx["Nginx Reverse Proxy (TLS Termination & Rate Limiting)"]
     
-    Nginx -->|"REST / Auth / WS"| Backend["FastAPI Core Service (:8000)"]
+    Nginx -->|"REST / Auth / WS"| Backend["FastAPI Core Backend (:8000)"]
     Nginx -->|"/api/gateway/upload"| JavaGateway["Java 21 Ingestion Gateway (:8080)"]
     
-    JavaGateway -->|"Virtual Threads (Loom) High-Concurrency Ingestion"| Storage["Shared Storage (/data/uploads)"]
+    JavaGateway -->|"Virtual Threads (Loom) Ingestion"| Storage["Shared Storage (/data/uploads)"]
     Storage --> Backend
+    Storage --> Worker["Celery Analysis Worker"]
     
-    Backend -->|"Task Queue"| Redis["Redis Broker"]
-    Redis --> Worker["Celery Analysis Worker"]
+    Backend -->|"Dispatch Analysis Tasks"| Redis["Redis Broker"]
+    Redis --> Worker
     
-    Worker -->|"Relational Data"| Postgres["PostgreSQL Database"]
+    Worker -->|"Relational Ledger & Verdicts"| Postgres["PostgreSQL Database"]
     Worker -->|"Graph Analytics (PageRank, Louvain)"| Neo4j["Neo4j Graph Database"]
     Worker -->|"ML Anomaly Ensemble"| MLEngine["ML Models (IF + LOF + LightGBM)"]
     Worker -->|"Local LLM / VLM Inference"| Ollama["Local Ollama GPU Service (:11434)"]
@@ -75,7 +80,7 @@ FinFlow comes with a fully automated setup script that handles TLS certificate g
 ./setup.sh
 ```
 
-**For a completely non-interactive/silent setup (e.g. for CI/CD or AI Agents):**
+**For a completely non-interactive/silent setup (e.g. for CI/CD or Automated Deployment):**
 ```bash
 NON_INTERACTIVE=true ./setup.sh
 ```
@@ -203,71 +208,48 @@ If auto-detection fails, use the **Bank Override** dropdown on upload.
 
 ---
 
-## Agent Instructions (Read if you are an AI agent)
+## Repository Structure
 
-> This section is for AI coding assistants helping a developer set up or debug FinFlow.
-
-### Project layout
 ```
 finflow/
-├── backend/              # FastAPI app (Python 3.12)
-│   ├── alembic/versions/ # DB migrations (001→004, run in order)
-│   ├── celery_app.py     # Celery config (eager mode outside Docker)
-│   ├── config.py         # Settings via pydantic-settings, reads ../.env
-│   ├── database.py       # SQLAlchemy async engine (falls back to config.py)
-│   ├── engine/           # Rule engine, FIFO, Benford, CUSUM, risk fusion
-│   ├── graph/            # Neo4j populator + algorithms (SQL fallback exists)
-│   ├── llm/              # Groq / template LLM clients
-│   ├── ml/               # Isolation Forest, LOF, LightGBM ensemble
-│   ├── parsers/banks/    # Per-bank CSV parsers
-│   ├── routers/          # FastAPI routers (one per feature domain)
-│   └── tasks/            # Celery analysis pipeline
-├── frontend/src/
-│   ├── components/       # React components (GraphView, VerdictsPanel, etc.)
-│   └── pages/            # CaseDetailPage, CaseListPage, LoginPage, AdminPage
-├── models/               # Trained .joblib files (mounted :ro into Docker)
-├── nginx/nginx.conf      # 500MB upload limit, 600s proxy timeout
-├── scripts/              # generate_training_data.py, train_models.py, etc.
-├── worker/               # Celery worker Dockerfile
-└── docker-compose.yml    # All services defined here
+├── backend/                  # FastAPI Core Application (Python 3.12)
+│   ├── alembic/              # Database migration scripts (001 -> 004)
+│   ├── config.py             # Settings via pydantic-settings, reads ../.env
+│   ├── database.py           # Async SQLAlchemy database engine with fallback resolution
+│   ├── engine/               # Rule engine, FIFO money trail, Benford's test, CUSUM
+│   ├── entity/               # Entity extraction (UPI, IFSC, PAN, Account numbers)
+│   ├── graph/                # Neo4j graph population and GDS algorithm runners
+│   ├── llm/                  # Local Ollama client, prompt templates, and chat assistant
+│   ├── ml/                   # Isolation Forest, LightGBM, and LOF ensemble logic
+│   ├── parsers/              # Universal table parser, bank-specific parsers, and VLM parser
+│   ├── routers/              # Modular API routers (cases, statements, analytics, auth)
+│   └── tasks/                # Celery forensic analysis execution pipeline
+├── frontend/                 # React Single Page Application (Vite / Tailwind CSS)
+│   ├── src/
+│   │   ├── api/              # Axios HTTP client with session authorization
+│   │   ├── components/       # Graph visualizers, verdict panels, ledger, upload cards
+│   │   ├── contexts/         # Authentication context (sessionStorage) and theme context
+│   │   ├── hooks/            # WebSocket listeners and custom state hooks
+│   │   └── pages/            # CaseDetailPage, CaseListPage, LoginPage, AdminPage
+├── ingestion-gateway/        # High-Throughput Ingestion Service (Java 21 / Spring Boot 3)
+│   ├── src/main/java/        # Virtual Thread file chunking, hashing, and stream controllers
+│   └── pom.xml               # Maven configuration
+├── models/                   # Serialized ML model artifacts (.joblib) and hash registry
+├── nginx/                    # Reverse proxy configuration and TLS certificates
+├── plugins/                  # Neo4j Graph Data Science (GDS) plugin binaries
+├── scripts/                  # Synthetic data generator, model training, and admin provisioning
+├── worker/                   # Celery analysis worker container definition
+└── docker-compose.yml        # Multi-container service definitions
 ```
 
-### Quick Setup for AI Agents (One-Command Setup)
+### Core Architectural Safeguards
 
-If you are an AI agent tasked with setting up or verifying the repository, run:
-```bash
-NON_INTERACTIVE=true ./setup.sh
-```
-This single script will fully automate:
-1. Copying `.env.example` to `.env` with safe, templated defaults (and generating a secure `SECRET_KEY`).
-2. Creating self-signed TLS certificates in `nginx/certs/` (required for HTTPS reverse proxy).
-3. Downloading the Neo4j GDS plugin JAR to the `plugins/` directory.
-4. Building and starting all Docker containers.
-5. Upgrading the PostgreSQL database schema to the latest Alembic migrations.
-6. Installing the required spaCy `en_core_web_sm` English NLP model.
-7. Generating synthetic data and training the ML models.
-8. Automatically writing the fresh SHA-256 hashes to `models/hashes.json` (no code modification needed).
-9. Seeding the watchlist with default values.
-10. Creating the default `admin` user with the password from `.env`.
-11. Executing a health check against the application gateway.
-
-### Critical architectural facts
-
-1. **Database URL resolution**: `config.py` uses `Path(__file__).parent.parent / ".env"` — resolves the `.env` from the project root regardless of working directory. `database.py` falls back to `config.get_settings().database_url` when the `DATABASE_URL` env var is not set (i.e., running on host outside Docker).
-
-2. **Celery eager mode**: When running outside Docker (`/.dockerenv` absent), `celery_app.py` sets `task_always_eager=True` — tasks run synchronously in the same process. Inside Docker, Redis is used as broker.
-
-3. **Graph SQL fallback**: `backend/graph/algorithms.py` → `get_cytoscape_data()` tries Neo4j first; if unavailable (DNS failure), falls back to SQL. The SQL fallback parses counterparty accounts from narrations using `entity/extractor.py` and determines edge direction from `txn_type` (DR = account→counterparty, CR = counterparty→account).
-
-4. **Counterparty enrichment**: After `enrich_transactions_with_entities()` runs in the analysis pipeline, the enriched `counterparty_account` and `counterparty_name` fields are written back to the `transactions` table via UPDATE so the graph has real edges.
-
-5. **ML model hashes**: `backend/ml/model_loader.py` verifies model file SHA-256 integrity against the `MODEL_HASHES` hardcoded dict OR `/app/models/hashes.json` generated automatically at training time. Training models automatically creates this JSON, bypassing any manual copy-paste requirements.
-
-6. **Migration numbering**: Migrations are 001→004. If adding a new migration, it must be 005. Always use `CREATE TABLE IF NOT EXISTS` and `ADD COLUMN IF NOT EXISTS` for safety.
-
-7. **No cross-case module**: The cross-case entity hit system was intentionally skipped. The syndicate system covers this. Do not add `CrossCasePanel`, `cross_case.py`, or `/cross-case-hits` endpoint.
-
-8. **LLM provider**: `LLM_PROVIDER=ollama` routes requests to your local Ollama instance (`qwen3:4b`). `LLM_PROVIDER=template` uses offline template fallbacks. `LLM_PROVIDER=groq` uses Groq Cloud API.
+1. **Deterministic Database URL Resolution**: `config.py` resolves the absolute path to `.env` relative to project root, and `database.py` seamlessly falls back to `config.get_settings().database_url` when executing outside containerized networking.
+2. **Dynamic Task Execution Mode**: When running outside Docker (`/.dockerenv` absent), `celery_app.py` automatically activates `task_always_eager=True` for synchronous execution during local unit testing. Inside Docker, Redis coordinates task distribution.
+3. **Graph Fallback Resilience**: `backend/graph/algorithms.py` queries Neo4j GDS first. If the graph database is unreachable, it automatically falls back to an internal relational graph projection, extracting counterparty accounts from narrations and determining edge directions directly from transaction types (`DR` / `CR`).
+4. **Counterparty Graph Enrichment**: During forensic pipeline execution, extracted counterparty entities are reconciled and written back to the primary `transactions` ledger, ensuring real graph topology across all accounts.
+5. **Cryptographic Model Hash Verification**: `backend/ml/model_loader.py` enforces SHA-256 integrity validation against `models/hashes.json` before loading serialized model artifacts into memory, preventing model poisoning or tampering.
+6. **Air-Gapped Offline Inference**: `LLM_PROVIDER=ollama` strictly routes inference requests to the local host Ollama GPU daemon (`qwen3:4b` for forensic reasoning and `Qwen2-VL-2B` for document vision parsing). If Ollama is unavailable, `LLM_PROVIDER=template` provides offline deterministic template fallbacks. External cloud APIs are strictly disabled to guarantee zero data leakage.
 
 ---
 
@@ -314,123 +296,13 @@ To chat with `qwen3:4b` directly in your terminal:
 ollama run qwen3:4b
 ```
 
-### Common issues and fixes
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `relation "narration_clusters" does not exist` | Migration 004 not run | `docker compose exec backend alembic upgrade head` |
-| `relation "hypothesis_nodes" does not exist` | Migration 004 not run | Same as above |
-| Graph shows no nodes/edges | Neo4j unavailable AND counterparty_account is NULL | Re-run analysis after migration fix |
-| `Model hash mismatch` error | Models retrained but hashes not updated | Run `docker compose exec backend python scripts/compute_hashes.py` to regenerate `hashes.json` |
-| Login returns 500 | `DATABASE_URL` empty / DB not ready | Check `docker compose ps` — postgres must be healthy |
-| File upload returns 413 | Nginx 500MB limit or backend 500MB limit | Already set to 500MB — ensure nginx is restarted |
-| `No module named 'en_core_web_sm'` | spaCy model not downloaded | `docker compose exec backend python -m spacy download en_core_web_sm` |
-| Analysis stuck at 0% | Celery worker not running | `docker compose logs worker` — check for errors |
-| Analysis fails with `No parsed transactions` | Bank parser didn't detect format | Check `docker compose logs worker` for parser error; try uploading with bank_override query param |
-
-### How the Parsing Pipeline Works (Agent Guide)
-
-1. **Routing**: Files are received by `route_file` in `backend/parsers/router.py`.
-2. **Detection**: It extracts the first page's text to detect the bank using keywords. If no bank is detected, it defaults to `"generic"`.
-3. **Specific Attempt**: If the bank is one of the implemented banks (`sbi`, `hdfc`, `axis`, `kotak`), it runs the specialized parser. If that fails or yields 0 transactions, it falls back to the generic pipeline.
-4. **Generic Pipeline**:
-   - **PDF**: Extracts tables via `pdfplumber` / `camelot`. If no tables/rows are found, it automatically triggers Tesseract OCR (`parse_scanned_pdf`).
-
-   - **Excel/CSV/Docx**: Loads cells and runs `parse_generic_table` which maps columns dynamically.
-   - **Images**: Runs Tesseract OCR, reconstructs table columns using coordinate-based layout grouping, and runs `parse_generic_table`.
-5. **Testing Parsing Manually**:
-   ```bash
-   docker compose exec backend python -c "
-   import asyncio
-   from parsers.router import route_file
-   async def test():
-       txns, meta = await route_file('/path/to/statement.pdf', 'case_id_here', 'stmt_id_here')
-       print(f'Parsed {len(txns)} rows. Meta: {meta}')
-   asyncio.run(test())
-   "
-   ```
-
-### How to add a new API endpoint
-
-1. Add route to the appropriate file in `backend/routers/`
-2. Register router in `backend/main.py` with `app.include_router()`
-3. Frontend calls go to `/api/<path>` (nginx strips `/api/` prefix before forwarding to backend)
-4. Backend routes do NOT have `/api` prefix — they are mounted at `/`
-
-### Rebuilding after code changes
-```bash
-# Rebuild and restart everything
-docker compose up --build -d
-
-# Rebuild only changed services (faster)
-docker compose up --build -d backend worker
-
-# View logs
-docker compose logs -f backend
-docker compose logs -f worker
-```
-
 ---
 
-## Troubleshooting
+## Analysis Pipeline & Fraud Typologies
 
-### Check container status
-```bash
-docker compose ps
-```
-All containers should show `running` or `healthy`.
+### 19-Stage Forensic Execution Pipeline
 
-### View logs
-```bash
-docker compose logs -f           # all services
-docker compose logs -f backend   # API server only
-docker compose logs -f worker    # ML pipeline only
-docker compose logs -f nginx     # proxy (413 errors, etc.)
-```
-
-### Full reset (nuclear option)
-```bash
-docker compose down -v           # stops all + deletes volumes (DELETES ALL DATA)
-docker compose up --build -d     # fresh start
-# Then re-run all Post-Setup Steps
-```
-
-### Restart without losing data
-```bash
-docker compose restart backend worker
-```
-
-### Check if migrations are applied
-```bash
-docker compose exec backend alembic current
-# Should show: 004_phase5_accuracy (head)
-```
-
-### Verify ML models are loaded
-```bash
-docker compose exec backend python -c "
-from ml.model_loader import load_isolation_forest, load_lgbm_weak
-print('IF:', load_isolation_forest())
-print('LGBM:', load_lgbm_weak())
-"
-```
-
-### Test the API directly
-```bash
-# Health check
-curl -sk https://localhost:3000/api/health
-
-# Login
-curl -sk -X POST https://localhost:3000/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"YOUR_PASSWORD"}'
-```
-
----
-
-## Architecture Deep-Dive
-
-### Analysis Pipeline (what happens when you click "Analyze")
+When **Analyze Case Now** is triggered, the background Celery worker executes:
 
 ```
 1. File integrity check (SHA-256 hash verification)
@@ -449,38 +321,118 @@ curl -sk -X POST https://localhost:3000/auth/login \
 13. CUSUM change-point detection (detect behavioral regime changes)
 14. ML ensemble scoring (IF + LOF + LightGBM per transaction)
 15. Risk fusion (composite score per account)
-16. LLM second opinion (top-risk accounts reviewed by AI)
-17. Verdict fusion (algo verdict + LLM verdict → final tier)
+16. LLM second opinion (top-risk accounts reviewed by local AI)
+17. Verdict fusion (algorithmic verdict + LLM verdict → consensus tier)
 18. Save results (verdicts, alerts, money trail, narration clusters)
-19. Generate executive summary (LLM narrative)
+19. Generate executive summary (local LLM narrative & legal briefs)
 ```
 
-### Fraud Typologies Detected
+### Forensic Rules & Typologies Detected
 
-| Rule | Description |
-|------|-------------|
-| `STRUCTURING` | Amounts systematically just below ₹5L / ₹10L threshold |
-| `RAPID_MOVEMENT` | Credits forwarded within hours |
-| `CIRCULAR_FLOW` | Money returns to origin via intermediaries |
-| `VELOCITY_SPIKE` | 10x normal transaction frequency in 72h |
-| `DORMANT_ACTIVATION` | 8+ months quiet then sudden large transfers |
-| `FAN_OUT` | One source → many destinations same day |
-| `WATCHLIST_HIT` | Account/entity matches known bad actor list |
-| `FAILED_TXN_ABUSE` | Repeated failed transactions (probing behaviour) |
-| `ML_ANOMALY_IF` | Isolation Forest scores as outlier |
-| `CUSUM_BREAK` | Statistical regime change detected |
-| `OFF_HOURS_LARGE` | Large transfers at 2–4 AM |
-
-### Ports (Docker)
-| Service | Internal Port | Exposed |
-|---------|--------------|---------|
-| Nginx | 443, 80 | **3000 (HTTPS)**, 3080 (HTTP→redirect) |
-| Backend | 8000 | Not exposed directly |
-| Frontend | 3000 | Not exposed directly |
-| PostgreSQL | 5432 | Not exposed |
-| Neo4j | 7687 (bolt), 7474 (HTTP) | Not exposed |
-| Redis | 6379 | Not exposed |
+| Rule Identifier | Typology Description |
+|:---|:---|
+| `STRUCTURING` | Amounts systematically calibrated just below reporting thresholds (e.g. ₹50,000 / ₹10,00,000). |
+| `RAPID_MOVEMENT` | Pass-through mule behavior where credits are forwarded to other destinations within hours. |
+| `CIRCULAR_FLOW` | Round-trip fund loops where money returns to origin via intermediary hops. |
+| `VELOCITY_SPIKE` | Transaction frequency exceeding 10x normal baseline within a rolling 72-hour window. |
+| `DORMANT_ACTIVATION` | Accounts inactive for extended durations that suddenly process high-value inflows. |
+| `FAN_OUT` | One primary source account dispersing funds into multiple recipient accounts in a single day. |
+| `WATCHLIST_HIT` | Exact match against seeded economic offender lists, sanctions, or designated watchlists. |
+| `FAILED_TXN_ABUSE` | Repeated failed micro-transactions preceding high-value transfers (channel probing behavior). |
+| `ML_ANOMALY_IF` | Multi-dimensional statistical outlier identified by the trained Isolation Forest model. |
+| `CUSUM_BREAK` | Statistically significant structural shift in account behavioral pattern. |
+| `OFF_HOURS_LARGE` | High-value transfers executed during unusual nocturnal windows (2:00 AM – 4:30 AM). |
 
 ---
 
-*Built for Karnataka CID EOW — Internal use only. Not for public distribution.*
+## System Diagnostics & Operations
+
+### Container Health Status
+
+To verify all system containers are operational:
+```bash
+docker compose ps
+```
+All services (`nginx`, `backend`, `worker`, `ingestion-gateway`, `postgres`, `neo4j`, `redis`) should show `running` or `healthy`.
+
+### Inspecting Service Logs
+
+```bash
+# Monitor all logs in real time
+docker compose logs -f
+
+# Monitor specific components
+docker compose logs -f backend            # FastAPI core API server
+docker compose logs -f worker             # Celery ML & graph analysis worker
+docker compose logs -f ingestion-gateway  # Java 21 file ingestion gateway
+docker compose logs -f nginx              # Reverse proxy access & error logs
+```
+
+### Restarting Services Without Data Loss
+
+```bash
+# Restart backend and worker services
+docker compose restart backend worker
+
+# Restart the entire stack while preserving database volumes
+docker compose restart
+```
+
+### Schema & Migration Verification
+
+Verify that all database schema revisions are up-to-date:
+```bash
+docker compose exec backend alembic current
+```
+
+### Machine Learning Model Integrity Check
+
+Verify trained model files and SHA-256 verification hashes inside the running container:
+```bash
+docker compose exec backend python -c "
+from ml.model_loader import load_isolation_forest, load_lgbm_weak
+print('Isolation Forest:', load_isolation_forest())
+print('LightGBM Weak:', load_lgbm_weak())
+"
+```
+
+### API Gateway Health Verification
+
+```bash
+# Health check endpoint
+curl -sk https://localhost:3000/api/health
+
+# Verify authentication service
+curl -sk -X POST https://localhost:3000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}'
+```
+
+### Full System Reset (Purges All Volumes and Data)
+
+```bash
+# Nuclear reset: stops containers and destroys all persistent database volumes
+docker compose down -v
+
+# Rebuild and start fresh
+docker compose up --build -d
+```
+
+---
+
+## Docker Services & Port Matrix
+
+| Service Container | Internal Port | Host Port / Mapping | Accessibility | Purpose |
+|:---|:---|:---|:---|:---|
+| **`nginx`** | 443, 80 | **`3000 (HTTPS)`**, `3080 (HTTP)` | Public / External | TLS Termination, Reverse Proxy, React SPA |
+| **`backend`** | 8000 | Isolated | Internal Network Only | FastAPI Core Business Logic & Endpoints |
+| **`ingestion-gateway`** | 8080 | Isolated | Internal Network Only | Java 21 Virtual Thread Upload Streaming |
+| **`frontend`** | 3000 | Isolated | Internal Network Only | Vite SPA Development / Build Server |
+| **`postgres`** | 5432 | Isolated | Internal Network Only | Relational Database Storage |
+| **`neo4j`** | 7687, 7474 | Isolated | Internal Network Only | Graph Database Bolt & Browser Endpoints |
+| **`redis`** | 6379 | Isolated | Internal Network Only | Celery Task Broker & WebSocket Pub/Sub |
+| **`ollama` (Host)** | 11434 | **`11434`** | Host Machine | Local GPU-Accelerated LLM & VLM Inference |
+
+---
+
+*FinFlow — Developed for the Karnataka CID Economic Offences Wing (EOW). For official investigative and judicial analysis use.*
