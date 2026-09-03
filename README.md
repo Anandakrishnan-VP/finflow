@@ -1,5 +1,5 @@
-# FinFlow — Forensic Bank Statement Analysis System
-**Karnataka CID Economic Offences Wing (EOW) — Internal Tool**
+# FinFlow - Forensic Bank Statement Analysis System
+**Karnataka CID Economic Offences Wing (EOW) - Internal Tool**
 
 A full-stack forensic analysis platform for detecting financial crimes (money laundering, structuring, pass-through mule networks) from bank statement CSVs. Powered by a 3-model ML ensemble, interactive D3.js & Cytoscape.js graph analytics, LLM second opinions, and an AI chat assistant.
 
@@ -65,7 +65,7 @@ graph TD
 | Git | Any | For cloning |
 | OpenSSL | Any | For generating TLS cert (Git Bash has it on Windows) |
 
-**No Python, Node, or database installation required** — everything runs in Docker.
+**No Python, Node, or database installation required**: everything runs in Docker.
 
 ---
 
@@ -159,16 +159,16 @@ If you prefer to configure every component manually, follow these steps:
    - Watch real-time progress on the progress bar
    - Takes 30 seconds to 5 minutes depending on transaction count
 4. **Review Results** in tabs:
-   - **Executive Summary** — AI-generated narrative
-   - **Verdicts** — Per-account risk scores with ML + LLM reasoning
-   - **Graph** — Interactive D3.js network visualization (with force-directed, radial, and Sankey flow layouts) and localized Cytoscape.js suspect graphs
-   - **Alerts** — Flagged transactions with evidence
-   - **Transactions** — Multi-criteria search dashboard (filtering by date ranges, amount sliders, payment channels, and flag types)
-   - **Money Trail** — Interactive split-screen visual ledger with credit-to-debit hover highlights
-   - **Entities** — Extracted PANs, UPIs, phone numbers, IFSCs
-   - **Hypothesis** — AI-driven hypothesis engine
-   - **Ask AI** — Natural language query over case data
-   - **Reports** — Generate PDF/Word officer briefs
+   - **Executive Summary**: AI-generated forensic narrative
+   - **Verdicts**: Per-account risk scores with ML + LLM reasoning
+   - **Graph**: Interactive D3.js network visualization (with force-directed, radial, and Sankey flow layouts) and localized Cytoscape.js suspect graphs
+   - **Alerts**: Flagged transactions with evidence trails
+   - **Transactions**: Multi-criteria search dashboard (filtering by date ranges, amount sliders, payment channels, and flag types)
+   - **Money Trail**: Interactive split-screen visual ledger with credit-to-debit hover highlights
+   - **Entities**: Extracted PANs, UPIs, phone numbers, IFSCs
+   - **Hypothesis**: AI-driven hypothesis engine
+   - **Ask AI**: Natural language query over case data
+   - **Reports**: Generate PDF/Word officer briefs
 
 ---
 
@@ -341,7 +341,7 @@ When **Analyze Case Now** is triggered, the background Celery worker executes:
 | `FAILED_TXN_ABUSE` | Repeated failed micro-transactions preceding high-value transfers (channel probing behavior). |
 | `ML_ANOMALY_IF` | Multi-dimensional statistical outlier identified by the trained Isolation Forest model. |
 | `CUSUM_BREAK` | Statistically significant structural shift in account behavioral pattern. |
-| `OFF_HOURS_LARGE` | High-value transfers executed during unusual nocturnal windows (2:00 AM – 4:30 AM). |
+| `OFF_HOURS_LARGE` | High-value transfers executed during unusual nocturnal windows (2:00 AM - 4:30 AM). |
 
 ---
 
@@ -435,4 +435,4 @@ docker compose up --build -d
 
 ---
 
-*FinFlow — Developed for the Karnataka CID Economic Offences Wing (EOW). For official investigative and judicial analysis use.*
+*FinFlow: Developed for the Karnataka CID Economic Offences Wing (EOW). For official investigative and judicial analysis use.*
